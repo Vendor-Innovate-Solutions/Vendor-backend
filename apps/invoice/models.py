@@ -173,7 +173,7 @@ class Invoice(CompanyScopedModel):
         
         # Check if PaymentLine model exists
         try:
-            from apps.payment.models import PaymentLine
+            from apps.voucher.models import PaymentLine
             
             # Aggregate payments applied to this invoice
             paid = PaymentLine.objects.filter(
