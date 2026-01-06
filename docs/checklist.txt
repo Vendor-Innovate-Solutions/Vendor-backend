@@ -1,0 +1,271 @@
+PHASE 1 — Foundation & Safety (DO THIS FIRST)
+1️⃣ Database & model hardening
+
+Goal: prevent data corruption forever.
+
+ Add DB constraints
+
+One current financial year per company
+
+Unique voucher numbers per (company, voucher_type, FY)
+
+Unique account codes per company
+
+ Add CHECK constraints
+
+DR/CR only
+
+Quantity > 0
+
+ Replace risky CASCADE deletes with PROTECT on:
+
+Ledger
+
+Voucher
+
+Invoice
+
+FinancialYear
+
+ Add indexes
+
+(company, created_at)
+
+(company, status)
+
+(company, code)
+
+👉 Output: schema that auditors won’t break
+
+PHASE 2 — Core Accounting Engine (HEART OF ERP)
+2️⃣ Voucher posting service (atomic)
+
+Goal: single source of truth for accounting.
+
+Create a posting service, not logic in views.
+
+ Voucher validation
+
+≥ 2 lines
+
+ΣDR = ΣCR
+
+Ledger.company == Voucher.company
+
+FY not closed
+
+ Atomic transaction
+
+ Auto-sequence generation
+
+ Posting timestamp
+
+ Status transition: DRAFT → POSTED
+
+📌 Never update balances anywhere.
+
+3️⃣ Voucher reversal & cancellation
+
+Goal: audit-safe corrections.
+
+ Reverse voucher generator
+
+New voucher with inverted DR/CR
+
+Link via reversed_voucher
+
+ Disallow delete after posting
+
+ Enforce policy via VoucherType flags
+
+PHASE 3 — Inventory Engine (NON-NEGOTIABLE)
+4️⃣ Stock movement service
+
+Goal: correct stock on hand always.
+
+ StockMovement creation tied to voucher
+
+ Support:
+
+IN (purchase, production)
+
+OUT (sale, consumption)
+
+Transfer (from → to godown)
+
+ Batch enforcement if enabled
+
+ Unit of Measure conversion
+
+Rule
+
+Stock on Hand = Σ(IN) − Σ(OUT)
+
+5️⃣ Stock valuation engine (FIFO / AVG)
+
+Goal: financial correctness.
+
+ FIFO buckets per item
+
+ AVG calculation per movement
+
+ Inventory value report
+
+ Stock ↔ GL valuation posting
+
+📌 No shortcuts here. This is where ERPs fail.
+
+PHASE 4 — Sales, Purchase & Invoicing
+6️⃣ Order → Invoice → Voucher pipeline
+
+Goal: operational flow.
+
+ SalesOrder lifecycle
+
+Draft → Confirmed → Invoiced → Closed
+
+ PurchaseOrder lifecycle
+
+ Invoice creation
+
+ Auto-create Voucher from Invoice
+
+ Link Invoice ↔ Voucher
+
+7️⃣ Credit control & aging
+
+Goal: prevent bad debt.
+
+ Outstanding calculation
+
+ Credit limit enforcement
+
+ Aging buckets (0–30 / 31–60 / 60+)
+
+PHASE 5 — GST & Statutory (INDIA-CRITICAL)
+8️⃣ GST computation engine
+
+Goal: returns without Excel hell.
+
+ GST breakup per invoice line
+
+ Input vs Output tax ledger posting
+
+ Multi-GSTIN handling
+
+ Place of supply logic
+
+9️⃣ GST returns
+
+ GSTR-1 (sales)
+
+ GSTR-3B (summary)
+
+ JSON generation for portal
+
+ Lock vouchers after filing
+
+PHASE 6 — Payroll Engine
+🔟 Payroll run system
+
+Goal: repeatable salary processing.
+
+ PayrollRun (monthly)
+
+ Pull EmployeePayStructure
+
+ Compute:
+
+Gross
+
+PF
+
+ESI
+
+TDS
+
+Net pay
+
+ Create Payroll Voucher
+
+ Lock payroll month
+
+PHASE 7 — Permissions & Security
+1️⃣1️⃣ Role-based access control
+
+Goal: zero data leaks.
+
+ Company context middleware
+
+ Role → permission matrix
+
+ Enforce company scoping at query level
+
+ Block cross-company access
+
+1️⃣2️⃣ Approval workflows (maker–checker)
+
+Goal: enterprise readiness.
+
+ Voucher approval flow
+
+ Amount-based thresholds
+
+ Approval audit trail
+
+PHASE 8 — Reporting & Performance
+1️⃣3️⃣ Core financial reports
+
+Must-have
+
+ Trial Balance
+
+ Balance Sheet
+
+ Profit & Loss
+
+ Ledger statements
+
+ Stock summary
+
+📌 Reports must be derived, never stored.
+
+1️⃣4️⃣ Performance optimization
+
+ Prefetch & select_related tuning
+
+ Materialized views (optional)
+
+ Background jobs for heavy reports
+
+PHASE 9 — System Integrity
+1️⃣5️⃣ Audit & compliance
+
+ Auto AuditLog hooks
+
+ Before/after snapshots
+
+ Immutable accounting data
+
+1️⃣6️⃣ Backup & recovery
+
+ Daily DB backups
+
+ FY-wise restore testing
+
+ Migration rollback strategy
+
+PHASE 10 — API & Integration
+1️⃣7️⃣ External interfaces
+
+ REST APIs for:
+
+Orders
+
+Invoices
+
+Payments
+
+ Webhooks
+
+ IntegrationEvent retry worker

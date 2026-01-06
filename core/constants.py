@@ -1,0 +1,73 @@
+"""
+Application-wide constants.
+"""
+
+# Order Status
+ORDER_STATUS_PENDING = 'pending'
+ORDER_STATUS_ALLOCATED = 'allocated'
+ORDER_STATUS_DELIVERED = 'delivered'
+ORDER_STATUS_CANCELLED = 'cancelled'
+
+ORDER_STATUS_CHOICES = [
+    (ORDER_STATUS_PENDING, 'Pending'),
+    (ORDER_STATUS_ALLOCATED, 'Allocated'),
+    (ORDER_STATUS_DELIVERED, 'Delivered'),
+    (ORDER_STATUS_CANCELLED, 'Cancelled'),
+]
+
+# Shipment Status
+SHIPMENT_STATUS_IN_TRANSIT = 'in_transit'
+SHIPMENT_STATUS_DELIVERED = 'delivered'
+SHIPMENT_STATUS_FAILED = 'failed'
+
+SHIPMENT_STATUS_CHOICES = [
+    (SHIPMENT_STATUS_IN_TRANSIT, 'In Transit'),
+    (SHIPMENT_STATUS_DELIVERED, 'Delivered'),
+    (SHIPMENT_STATUS_FAILED, 'Failed'),
+]
+
+# Product Status
+PRODUCT_STATUS_ON_DEMAND = 'on_demand'
+PRODUCT_STATUS_SUFFICIENT = 'sufficient'
+
+PRODUCT_STATUS_CHOICES = [
+    (PRODUCT_STATUS_ON_DEMAND, 'On Demand'),
+    (PRODUCT_STATUS_SUFFICIENT, 'Sufficient'),
+]
+
+# Payment Status
+PAYMENT_STATUS_PAID = 'paid'
+PAYMENT_STATUS_UNPAID = 'unpaid'
+PAYMENT_STATUS_PARTIAL = 'partial'
+
+PAYMENT_STATUS_CHOICES = [
+    (PAYMENT_STATUS_PAID, 'Paid'),
+    (PAYMENT_STATUS_UNPAID, 'Unpaid'),
+    (PAYMENT_STATUS_PARTIAL, 'Partial'),
+]
+
+# Payment Mode
+PAYMENT_MODE_CASH = 'cash'
+PAYMENT_MODE_UPI = 'upi'
+PAYMENT_MODE_CARD = 'card'
+PAYMENT_MODE_BANK = 'bank'
+
+PAYMENT_MODE_CHOICES = [
+    (PAYMENT_MODE_CASH, 'Cash'),
+    (PAYMENT_MODE_UPI, 'UPI'),
+    (PAYMENT_MODE_CARD, 'Card'),
+    (PAYMENT_MODE_BANK, 'Bank'),
+]
+
+# Connection Status
+CONNECTION_STATUS_PENDING = 'pending'
+CONNECTION_STATUS_APPROVED = 'approved'
+CONNECTION_STATUS_REJECTED = 'rejected'
+CONNECTION_STATUS_SUSPENDED = 'suspended'
+
+CONNECTION_STATUS_CHOICES = [
+    (CONNECTION_STATUS_PENDING, 'Pending'),
+    (CONNECTION_STATUS_APPROVED, 'Approved'),
+    (CONNECTION_STATUS_REJECTED, 'Rejected'),
+    (CONNECTION_STATUS_SUSPENDED, 'Suspended'),
+]

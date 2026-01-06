@@ -1,0 +1,18 @@
+"""
+Party API URL Configuration
+"""
+from django.urls import path
+from apps.party.api.views import (
+    PartyCreditStatusView,
+    PartyCanOrderView,
+    PartyListView
+)
+
+urlpatterns = [
+    # Party listing
+    path('', PartyListView.as_view(), name='party-list'),
+    
+    # Credit control
+    path('<uuid:party_id>/credit_status/', PartyCreditStatusView.as_view(), name='party-credit-status'),
+    path('<uuid:party_id>/can_order/', PartyCanOrderView.as_view(), name='party-can-order'),
+]

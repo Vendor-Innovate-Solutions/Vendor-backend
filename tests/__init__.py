@@ -1,0 +1,3 @@
+"""
+Cross-app integration tests.
+"""

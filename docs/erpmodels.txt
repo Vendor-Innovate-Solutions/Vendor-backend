@@ -1,0 +1,1332 @@
+================================================================================
+                    DJANGO ERP SYSTEM - COMPLETE MODELS DOCUMENTATION
+================================================================================
+Generated: December 25, 2025
+Purpose: Complete schema reference for all Django models with relationships
+================================================================================
+
+TABLE OF CONTENTS:
+1. Core Models (Base Classes)
+2. Authentication & User Management
+3. Company & Multi-Tenancy
+4. Accounting & Finance
+5. Party Management
+6. Inventory & Stock
+7. Products & Pricing
+8. Vouchers & Transactions
+9. Orders Management
+10. Invoicing
+11. HR & Payroll
+12. Logistics & Shipping
+13. Portal & Retailer Access
+14. System & Audit
+
+================================================================================
+1. CORE MODELS (BASE CLASSES)
+================================================================================
+
+BaseModel (Abstract)
+--------------------
+Location: core/models/base.py
+Purpose: Base class for all models providing UUID primary keys and timestamps
+Fields:
+  - id (UUIDField, PK) - UUID v4 primary key
+  - created_at (DateTimeField) - Auto-set on creation, indexed
+  - updated_at (DateTimeField) - Auto-updated on save
+Inheritance: All models in the system
+Indexes:
+  - created_at
+
+CompanyScopedModel (Abstract)
+-----------------------------
+Location: core/models/base.py
+Purpose: Base class for multi-tenant models (company-specific data)
+Inherits: BaseModel
+Fields:
+  - company (FK → company.Company, CASCADE) - Tenant isolation
+Additional Features:
+  - Related name pattern: "%(app_label)s_%(class)s_set"
+Indexes:
+  - company, created_at
+Notes: Ensures data isolation per company in multi-tenant setup
+
+================================================================================
+2. AUTHENTICATION & USER MANAGEMENT
+================================================================================
+
+User
+----
+Location: core/auth/models.py
+Purpose: Custom authentication user (extends Django AbstractUser)
+Inherits: AbstractUser (Django built-in)
+Fields:
+  - Standard Django User fields (username, password, email, first_name, last_name)
+  - phone (CharField[20]) - Optional phone number
+  - email_verified (BooleanField) - Email verification status
+  - phone_verified (BooleanField) - Phone verification status
+  - is_internal_user (BooleanField) - ERP staff member flag
+  - is_portal_user (BooleanField) - Retailer/customer portal user flag
+Settings: AUTH_USER_MODEL = 'core_auth.User'
+Relationships:
+  → CompanyUser (company_memberships)
+  → RetailerUser (retailer_profile)
+  → Employee (employee_profiles)
+  → AuditLog (audit_logs)
+Notes: 
+  - Users can have both internal and portal access
+  - Label: 'core_auth' (not 'auth')
+
+Employee (users app)
+--------------------
+Location: apps/users/models.py
+Purpose: Basic employee profile (legacy, prefer hr.Employee for full HR)
+Fields:
+  - employee_id (AutoField, PK)
+  - company (FK → company.Company)
+  - user (OneToOne → User, optional)
+  - contact (CharField[20])
+  - designation (CharField[100])
+  - department (CharField[100])
+  - is_active (BooleanField)
+  - joined_date (DateField, optional)
+Relationships:
+  → User (user)
+  → Company (company)
+
+PasswordResetOTP
+----------------
+Location: apps/users/models.py
+Purpose: OTP-based password reset
+Fields:
+  - user (FK → User)
+  - otp (CharField[6]) - Auto-generated
+  - is_verified (BooleanField)
+  - created_at (DateTimeField)
+  - expires_at (DateTimeField) - 10 minutes from creation
+Methods:
+  - generate_otp() - Generates 6-digit OTP
+  - is_expired() - Check if OTP expired
+
+================================================================================
+3. COMPANY & MULTI-TENANCY
+================================================================================
+
+Currency
+--------
+Location: apps/company/models.py
+Inherits: BaseModel
+Purpose: Global currency master
+Fields:
+  - code (CharField[10], unique, indexed) - Currency code (USD, INR, etc.)
+  - name (CharField[50])
+  - symbol (CharField[10]) - Currency symbol
+  - decimal_places (PositiveSmallIntegerField) - Precision (default: 2)
+Relationships:
+  → Company (companies)
+  → PriceList (price_lists)
+  → Invoice (invoices)
+  → SalesOrder (sales_orders)
+  → PurchaseOrder (purchase_orders)
+Unique Constraints: code
+Ordering: code
+
+Company
+-------
+Location: apps/company/models.py
+Inherits: BaseModel
+Purpose: Multi-tenant company entity (each company = separate ERP instance)
+Fields:
+  - code (CharField[20], unique, indexed) - Company code
+  - name (CharField[255])
+  - legal_name (CharField[255])
+  - company_type (CharField[50]) - PRIVATE_LIMITED, PUBLIC_LIMITED, etc.
+  - timezone (CharField[50], default='UTC')
+  - language (CharField[20], default='en')
+  - base_currency (FK → Currency, PROTECT)
+  - is_active (BooleanField)
+  - is_deleted (BooleanField) - Soft delete flag
+Relationships:
+  → Currency (base_currency)
+  → All CompanyScopedModel instances
+  → Address (company addresses)
+  → CompanyFeature
+  → CompanyUser
+  → FinancialYear
+  → Sequence
+Unique Constraints: code
+Indexes: code, is_active+is_deleted
+Ordering: name
+
+Address
+-------
+Location: apps/company/models.py
+Inherits: CompanyScopedModel
+Purpose: Company addresses (offices, warehouses, etc.)
+Fields:
+  - address_type (CharField[30]) - REGISTERED, CORPORATE, BRANCH, WAREHOUSE, etc.
+  - line1, line2 (CharField[255])
+  - city (CharField[100])
+  - state (CharField[100])
+  - country (CharField[100])
+  - pincode (CharField[20])
+Relationships:
+  → Company (company)
+  → Godown (godowns) - Warehouses at this address
+  → Shipment (shipments_from) - Origin address for shipments
+Indexes: company+address_type
+
+CompanyFeature
+--------------
+Location: apps/company/models.py
+Inherits: CompanyScopedModel
+Purpose: Feature flags and configuration per company
+Fields:
+  - inventory_enabled (BooleanField, default=True)
+  - accounting_enabled (BooleanField, default=True)
+  - payroll_enabled (BooleanField, default=False)
+  - gst_enabled (BooleanField, default=False)
+  - locked (BooleanField, default=False) - Financial freeze
+Relationships:
+  → Company (company)
+Notes: When locked=True, no financial transactions can be modified
+
+CompanyUser
+-----------
+Location: apps/company/models.py
+Inherits: CompanyScopedModel
+Purpose: Internal ERP operators (accountants, warehouse staff, admins)
+Fields:
+  - user (FK → User, CASCADE)
+  - role (CharField[50]) - ADMIN, MANAGER, ACCOUNTANT, STOCK_KEEPER, etc.
+  - is_default (BooleanField) - Default company on login
+  - is_active (BooleanField)
+Relationships:
+  → User (user)
+  → Company (company)
+Unique Constraints: user + company
+Indexes: company+is_active, user+is_default
+Notes: Users can belong to multiple companies with different roles
+
+FinancialYear
+-------------
+Location: apps/company/models.py
+Inherits: CompanyScopedModel
+Purpose: Financial year master per company
+Fields:
+  - name (CharField[20]) - E.g., "2024-25"
+  - start_date (DateField)
+  - end_date (DateField)
+  - is_current (BooleanField) - Only one per company
+  - is_closed (BooleanField) - Once closed, no posting allowed
+Relationships:
+  → Company (company)
+  → Voucher (vouchers)
+  → Invoice (invoices)
+  → Ledger (ledger_opening_balances) - Opening balance FY
+Unique Constraints: One is_current=True per company
+Check Constraints: start_date < end_date
+Indexes: company+is_current, company+start_date+end_date
+Validation: No overlapping FY dates within same company
+
+Sequence
+--------
+Location: apps/company/models.py
+Inherits: CompanyScopedModel
+Purpose: Auto-numbering sequences (vouchers, invoices, etc.)
+Fields:
+  - key (CharField[100], indexed) - Compound key format: company_id:code:fy_id
+  - prefix (CharField[20]) - Number prefix
+  - last_value (PositiveIntegerField, default=0) - Last used number
+  - reset_period (CharField[20]) - NEVER, YEARLY, MONTHLY, DAILY
+Relationships:
+  → Company (company)
+Unique Constraints: company + key
+Indexes: company+key
+Notes:
+  - Thread-safe: Use select_for_update() when incrementing
+  - Compound keys prevent cross-FY/cross-type collisions
+  - Format: {company_uuid}:{voucher_type_code}:{fy_uuid}
+
+================================================================================
+4. ACCOUNTING & FINANCE
+================================================================================
+
+AccountGroup
+------------
+Location: apps/accounting/models.py
+Inherits: CompanyScopedModel
+Purpose: Hierarchical chart of accounts structure
+Fields:
+  - name (CharField[100])
+  - code (CharField[50], indexed)
+  - parent (FK → self, PROTECT, optional) - Hierarchy
+  - nature (CharField[20]) - ASSET, LIABILITY, EQUITY, INCOME, EXPENSE
+  - report_type (CharField[10]) - BS (Balance Sheet), PL (Profit & Loss)
+  - path (CharField[255]) - Materialized path for traversal
+Relationships:
+  → AccountGroup (parent/children)
+  → Ledger (ledgers)
+Unique Constraints: company + code
+Indexes: company+code, company+parent, company+nature
+
+Ledger
+------
+Location: apps/accounting/models.py
+Inherits: CompanyScopedModel
+Purpose: Leaf-level accounts (all transactions post here)
+Fields:
+  - code (CharField[50], indexed)
+  - name (CharField[255])
+  - group (FK → AccountGroup, PROTECT)
+  - account_type (CharField[30]) - BANK, CASH, CUSTOMER, SUPPLIER, etc.
+  - opening_balance (Decimal[16,2])
+  - opening_balance_type (CharField[2]) - DR/CR
+  - opening_balance_fy (FK → FinancialYear, PROTECT) - REQUIRED
+  - is_bill_wise (BooleanField) - Enable bill-by-bill tracking
+  - is_cost_center_applicable (BooleanField)
+  - requires_reconciliation (BooleanField) - For bank reconciliation
+  - is_system (BooleanField) - System ledger (cannot delete)
+  - is_active (BooleanField)
+Relationships:
+  → AccountGroup (group)
+  → FinancialYear (opening_balance_fy)
+  → Party (party) - OneToOne, reverse relation
+  → VoucherLine (voucher_lines)
+  → TaxLedger (tax_config)
+  → PayHead (pay_heads)
+Unique Constraints: company + code
+Indexes: company+code, company+account_type, company+is_active
+Notes: Every party must have a linked ledger
+
+TaxLedger
+---------
+Location: apps/accounting/models.py
+Inherits: BaseModel
+Purpose: Tax configuration for ledgers
+Fields:
+  - ledger (OneToOne → Ledger, CASCADE)
+  - tax_type (CharField[20]) - GST, CGST, SGST, IGST, VAT, etc.
+  - rate (Decimal[6,2]) - Tax rate percentage
+  - tax_direction (CharField[10]) - PAYABLE (output), RECEIVABLE (input)
+  - effective_from (DateField)
+Relationships:
+  → Ledger (ledger)
+
+CostCenter
+----------
+Location: apps/accounting/models.py
+Inherits: CompanyScopedModel
+Purpose: Cost/profit centers for dimensional analysis
+Fields:
+  - code (CharField[50], indexed)
+  - name (CharField[100])
+  - is_active (BooleanField)
+Relationships:
+  → VoucherLine (voucher_lines) - Optional cost center allocation
+Unique Constraints: company + code
+Indexes: company+code, company+is_active
+Notes: Enables expense/revenue tracking by department, project, branch, etc.
+
+================================================================================
+5. PARTY MANAGEMENT
+================================================================================
+
+Party
+-----
+Location: apps/party/models.py
+Inherits: CompanyScopedModel
+Purpose: Business entities (customers, suppliers, employees)
+Fields:
+  - name (CharField[255])
+  - party_type (CharField[20]) - CUSTOMER, SUPPLIER, BOTH, EMPLOYEE, OTHER
+  - ledger (OneToOne → Ledger, PROTECT) - REQUIRED accounting ledger link
+  - email (EmailField, optional)
+  - phone (CharField[20])
+  - gstin (CharField[15]) - GST Identification Number
+  - pan (CharField[10]) - PAN Number
+  - is_retailer (BooleanField) - Enable portal login
+  - credit_limit (Decimal[14,2])
+  - credit_days (PositiveIntegerField) - Payment terms
+  - is_active (BooleanField)
+Relationships:
+  → Ledger (ledger) - OneToOne
+  → PartyAddress (addresses)
+  → PartyBankAccount (bank_accounts)
+  → Invoice (invoices)
+  → SalesOrder (sales_orders)
+  → PurchaseOrder (purchase_orders)
+  → RetailerUser (retailer_users)
+Unique Constraints: None (party_type not unique)
+Indexes: company+party_type, company+is_active, company+gstin
+Notes:
+  - Every party must have exactly ONE control ledger
+  - is_retailer=True enables portal access via RetailerUser
+
+PartyAddress
+------------
+Location: apps/party/models.py
+Inherits: BaseModel
+Purpose: Multiple addresses per party
+Fields:
+  - party (FK → Party, CASCADE)
+  - address_type (CharField[20]) - BILLING, SHIPPING, REGISTERED, CONTACT
+  - line1, line2 (CharField[255])
+  - city, state, country (CharField[100])
+  - pincode (CharField[20])
+  - is_default (BooleanField) - Default address for this type
+Relationships:
+  → Party (party)
+  → Shipment (shipments_to)
+Indexes: party+address_type
+
+PartyBankAccount
+----------------
+Location: apps/party/models.py
+Inherits: BaseModel
+Purpose: Bank account details for parties
+Fields:
+  - party (FK → Party, CASCADE)
+  - bank_name (CharField[100])
+  - account_number (CharField[50])
+  - ifsc (CharField[20]) - IFSC code (Indian banks)
+  - swift_code (CharField[20]) - SWIFT/BIC (international)
+  - branch (CharField[100])
+  - is_primary (BooleanField) - Primary account for payments
+  - is_active (BooleanField)
+Relationships:
+  → Party (party)
+Indexes: party+is_primary
+Notes: Used for payment processing and reconciliation
+
+================================================================================
+6. INVENTORY & STOCK
+================================================================================
+
+UnitOfMeasure
+-------------
+Location: apps/inventory/models.py
+Inherits: BaseModel
+Purpose: Global UOM master (kg, meter, piece, liter, etc.)
+Fields:
+  - name (CharField[50])
+  - symbol (CharField[10], unique, indexed) - Unit symbol
+  - category (CharField[30]) - WEIGHT, LENGTH, VOLUME, QUANTITY, TIME, AREA
+Relationships:
+  → StockItem (stock_items)
+  → ItemPrice (item prices via price_list)
+  → InvoiceLine (invoice_lines)
+  → OrderItem (order_items)
+  → ShipmentItem (shipment_items)
+Unique Constraints: symbol
+Ordering: category, name
+
+StockItem
+---------
+Location: apps/inventory/models.py
+Inherits: CompanyScopedModel
+Purpose: Products/items that can be tracked in inventory
+Fields:
+  - sku (CharField[100], indexed) - Stock Keeping Unit
+  - name (CharField[255])
+  - description (TextField)
+  - uom (FK → UnitOfMeasure, PROTECT)
+  - is_stock_item (BooleanField) - True for goods, False for services
+  - is_active (BooleanField)
+Relationships:
+  → UnitOfMeasure (uom)
+  → StockBatch (batches)
+  → PriceList → ItemPrice (prices)
+  → StockMovement (movements)
+  → InvoiceLine (invoice_lines)
+  → OrderItem (order_items)
+Unique Constraints: company + sku
+Indexes: company+sku, company+is_active
+Notes: NEVER store quantity on item - compute from movements
+
+PriceList
+---------
+Location: apps/inventory/models.py
+Inherits: CompanyScopedModel
+Purpose: Price list master for different segments/periods
+Fields:
+  - name (CharField[100])
+  - currency (FK → Currency, PROTECT)
+  - is_default (BooleanField)
+  - valid_from (DateField)
+  - valid_to (DateField, optional)
+Relationships:
+  → Currency (currency)
+  → ItemPrice (item_prices)
+Indexes: company+is_default, company+valid_from+valid_to
+
+ItemPrice
+---------
+Location: apps/inventory/models.py
+Inherits: BaseModel
+Purpose: Time-bound pricing for items
+Fields:
+  - item (FK → StockItem, CASCADE)
+  - price_list (FK → PriceList, CASCADE)
+  - rate (Decimal[14,4])
+  - valid_from (DateField)
+  - valid_to (DateField, optional)
+Relationships:
+  → StockItem (item)
+  → PriceList (price_list)
+Indexes: item+price_list+valid_from
+
+StockBatch
+----------
+Location: apps/inventory/models.py
+Inherits: CompanyScopedModel
+Purpose: Batch/Lot tracking (expiry, FIFO, traceability)
+Fields:
+  - item (FK → StockItem, CASCADE)
+  - batch_number (CharField[100], indexed)
+  - mfg_date (DateField, optional)
+  - exp_date (DateField, optional)
+  - is_active (BooleanField)
+Relationships:
+  → StockItem (item)
+  → StockMovement (movements)
+  → ShipmentItem (shipment_items)
+Unique Constraints: company + item + batch_number
+Indexes: company+item+batch_number, company+exp_date
+
+Godown
+------
+Location: apps/inventory/models.py
+Inherits: CompanyScopedModel
+Purpose: Warehouse/location hierarchy
+Fields:
+  - name (CharField[100])
+  - code (CharField[50], indexed)
+  - parent (FK → self, PROTECT, optional) - Warehouse hierarchy
+  - address (FK → Address, SET_NULL, optional)
+  - is_active (BooleanField)
+Relationships:
+  → Godown (parent/children)
+  → Address (address)
+  → StockMovement (inward_movements, outward_movements)
+Unique Constraints: company + code
+Indexes: company+code, company+is_active
+
+StockMovement
+-------------
+Location: apps/inventory/models.py
+Inherits: CompanyScopedModel
+Purpose: Core stock ledger - ALL inventory transactions
+Fields:
+  - item (FK → StockItem, PROTECT)
+  - from_godown (FK → Godown, PROTECT, optional) - Source location
+  - to_godown (FK → Godown, PROTECT, optional) - Destination location
+  - batch (FK → StockBatch, PROTECT, optional)
+  - quantity (Decimal[14,3]) - MUST BE POSITIVE
+  - rate (Decimal[14,4]) - Rate per unit for valuation
+  - voucher (FK → Voucher, CASCADE) - REQUIRED: Every movement tied to voucher
+  - movement_date (DateField)
+Relationships:
+  → StockItem (item)
+  → Godown (from_godown, to_godown)
+  → StockBatch (batch)
+  → Voucher (voucher)
+Check Constraints: quantity > 0
+Indexes: company+item+movement_date, company+to_godown+item, voucher
+Notes:
+  - Stock balance = Σ(quantity where to_godown=X) - Σ(quantity where from_godown=X)
+  - NEVER store balance on item - always compute from movements
+  - Direction indicated by from_godown vs to_godown
+
+================================================================================
+7. PRODUCTS & PRICING (Legacy)
+================================================================================
+
+Category
+--------
+Location: apps/products/models.py
+Purpose: Product categorization (legacy, prefer inventory.StockItem)
+Fields:
+  - category_id (AutoField, PK)
+  - company (FK → Company)
+  - name (CharField[255], unique)
+Relationships:
+  → Company (company)
+  → Product (products)
+Methods: get_category_counts() - Annotated product count
+
+Product
+-------
+Location: apps/products/models.py
+Purpose: Legacy product model (prefer inventory.StockItem)
+Fields:
+  - product_id (AutoField, PK)
+  - company (FK → Company)
+  - name (CharField[255])
+  - category (FK → Category, CASCADE, optional)
+  - available_quantity (PositiveIntegerField)
+  - unit (CharField[10]) - UQC choices (BAG, KGS, PCS, etc.)
+  - total_shipped, total_required_quantity (PositiveIntegerField)
+  - price (Decimal[10,2])
+  - hsn_code (CharField[10])
+  - cgst_rate, sgst_rate, igst_rate, cess_rate (Decimal[5,2])
+  - created_by (FK → User, SET_NULL, optional)
+  - status (CharField[20]) - on_demand, sufficient
+Relationships:
+  → Company (company)
+  → Category (category)
+  → User (created_by)
+Methods: update_status() - Auto-update based on quantity
+Notes: Legacy model - new implementations should use inventory.StockItem
+
+================================================================================
+8. VOUCHERS & TRANSACTIONS
+================================================================================
+
+VoucherType
+-----------
+Location: apps/voucher/models.py
+Inherits: CompanyScopedModel
+Purpose: Voucher type configuration
+Fields:
+  - name (CharField[100])
+  - code (CharField[50], indexed) - JV, PAY, RCP, SALES, PURCHASE, etc.
+  - category (CharField[30]) - JOURNAL, PAYMENT, RECEIPT, CONTRA, etc.
+  - is_accounting (BooleanField) - Posts to accounting ledgers
+  - is_inventory (BooleanField) - Affects inventory (stock movements)
+  - is_active (BooleanField)
+Relationships:
+  → Voucher (vouchers)
+Unique Constraints: company + code
+Indexes: company+code, company+category
+
+Voucher
+-------
+Location: apps/voucher/models.py
+Inherits: CompanyScopedModel
+Purpose: Core double-entry accounting entity
+Fields:
+  - voucher_type (FK → VoucherType, PROTECT)
+  - financial_year (FK → FinancialYear, PROTECT)
+  - voucher_number (CharField[50], indexed) - Auto-generated from Sequence
+  - date (DateField, indexed)
+  - narration (TextField) - Description/remarks
+  - status (CharField[20]) - DRAFT, POSTED, CANCELLED, REVERSED
+  - reversed_voucher (FK → self, PROTECT, optional) - Link to original if reversal
+  - reference_number (CharField[50]) - External reference (invoice #, cheque #)
+  - reference_date (DateField, optional)
+Relationships:
+  → VoucherType (voucher_type)
+  → FinancialYear (financial_year)
+  → VoucherLine (lines)
+  → Voucher (reversed_voucher/reversals)
+  → StockMovement (stock_movements)
+  → Invoice (invoice) - OneToOne reverse
+  → PayrollRun (payroll_run) - OneToOne reverse
+  → IdempotencyKey (idempotency_record) - OneToOne reverse
+Unique Constraints: company + voucher_type + financial_year + voucher_number
+Indexes: company+voucher_number, company+date+status, company+voucher_type+status
+Notes:
+  - POSTED vouchers cannot be edited
+  - Sequence key format: {company_id}:{voucher_type_code}:{fy_id}
+
+VoucherLine
+-----------
+Location: apps/voucher/models.py
+Inherits: BaseModel
+Purpose: Voucher line entries (double-entry bookkeeping)
+Fields:
+  - voucher (FK → Voucher, CASCADE)
+  - line_no (PositiveIntegerField) - Line ordering
+  - ledger (FK → Ledger, PROTECT)
+  - amount (Decimal[16,2]) - MUST BE POSITIVE
+  - entry_type (CharField[2]) - DR (Debit) or CR (Credit)
+  - cost_center (FK → CostCenter, PROTECT, optional)
+  - against_voucher (FK → Voucher, PROTECT, optional) - Bill-wise tracking
+  - remarks (CharField[255])
+Relationships:
+  → Voucher (voucher)
+  → Ledger (ledger)
+  → CostCenter (cost_center)
+  → Voucher (against_voucher/settled_lines)
+Check Constraints:
+  - entry_type in ['DR', 'CR']
+  - amount > 0
+Indexes: voucher+line_no, ledger+entry_type
+Ordering: voucher, line_no
+Notes:
+  - Double-entry validation: Σ(DR) = Σ(CR) per voucher
+  - NO company field (inherited via voucher)
+  - NO party field (use ledger)
+
+================================================================================
+9. ORDERS MANAGEMENT
+================================================================================
+
+SalesOrder
+----------
+Location: apps/orders/models.py
+Inherits: CompanyScopedModel
+Purpose: Sales orders from customers
+Fields:
+  - order_number (CharField[50], indexed)
+  - customer (FK → Party, PROTECT) - Limited to CUSTOMER/BOTH party_type
+  - status (CharField[20]) - DRAFT, PENDING, CONFIRMED, IN_PROGRESS, COMPLETED, CANCELLED, ON_HOLD
+  - order_date (DateField)
+  - delivery_date (DateField, optional) - Expected delivery
+  - currency (FK → Currency, PROTECT)
+  - customer_po_number (CharField[50]) - Customer's PO reference
+  - terms_and_conditions (TextField)
+  - notes (TextField)
+Relationships:
+  → Party (customer)
+  → Currency (currency)
+  → OrderItem (items)
+  → Invoice (invoices)
+  → Shipment (shipments)
+Unique Constraints: company + order_number
+Indexes: company+order_number, company+customer+status, company+order_date, company+status
+
+PurchaseOrder
+-------------
+Location: apps/orders/models.py
+Inherits: CompanyScopedModel
+Purpose: Purchase orders to suppliers
+Fields:
+  - order_number (CharField[50], indexed)
+  - supplier (FK → Party, PROTECT) - Limited to SUPPLIER/BOTH party_type
+  - status (CharField[20]) - DRAFT, PENDING, CONFIRMED, IN_PROGRESS, COMPLETED, CANCELLED, ON_HOLD
+  - order_date (DateField)
+  - expected_date (DateField, optional) - Expected delivery from supplier
+  - currency (FK → Currency, PROTECT)
+  - supplier_quote_ref (CharField[50]) - Supplier's quote reference
+  - terms_and_conditions (TextField)
+  - notes (TextField)
+Relationships:
+  → Party (supplier)
+  → Currency (currency)
+  → OrderItem (items)
+  → Invoice (invoices)
+Unique Constraints: company + order_number
+Indexes: company+order_number, company+supplier+status, company+order_date, company+status
+
+OrderItem
+---------
+Location: apps/orders/models.py
+Inherits: CompanyScopedModel
+Purpose: Line items for orders (polymorphic: sales or purchase)
+Fields:
+  - sales_order (FK → SalesOrder, CASCADE, optional)
+  - purchase_order (FK → PurchaseOrder, CASCADE, optional)
+  - line_no (PositiveIntegerField)
+  - item (FK → StockItem, PROTECT)
+  - description (CharField[255])
+  - quantity (Decimal[12,3]) - MUST BE POSITIVE
+  - uom (FK → UnitOfMeasure, PROTECT)
+  - unit_rate (Decimal[14,4])
+  - discount_pct (Decimal[5,2])
+  - tax_rate (Decimal[6,2])
+  - delivered_qty (Decimal[12,3]) - Tracking fulfillment
+Relationships:
+  → SalesOrder (sales_order)
+  → PurchaseOrder (purchase_order)
+  → StockItem (item)
+  → UnitOfMeasure (uom)
+  → ShipmentItem (shipment_items)
+Check Constraints:
+  - Must have exactly one of sales_order OR purchase_order (not both)
+  - quantity > 0
+  - delivered_qty >= 0
+Indexes: sales_order+line_no, purchase_order+line_no, company+item
+
+================================================================================
+10. INVOICING
+================================================================================
+
+Invoice
+-------
+Location: apps/invoice/models.py
+Inherits: CompanyScopedModel
+Purpose: Sales/Purchase invoices with accounting integration
+Fields:
+  - invoice_number (CharField[50], indexed)
+  - invoice_date (DateField)
+  - party (FK → Party, PROTECT)
+  - invoice_type (CharField[20]) - SALES, PURCHASE, DEBIT_NOTE, CREDIT_NOTE, PROFORMA
+  - due_date (DateField) - Payment due date
+  - currency (FK → Currency, PROTECT)
+  - financial_year (FK → FinancialYear, PROTECT)
+  - status (CharField[20]) - DRAFT, SUBMITTED, PAID, PARTIALLY_PAID, OVERDUE, CANCELLED
+  - voucher (OneToOne → Voucher, PROTECT, optional) - Generated accounting voucher
+  - sales_order (FK → SalesOrder, SET_NULL, optional)
+  - purchase_order (FK → PurchaseOrder, SET_NULL, optional)
+  - subtotal, tax_amount, discount_amount, grand_total (Decimal[16,2])
+  - terms_and_conditions (TextField)
+  - notes (TextField)
+Relationships:
+  → Party (party)
+  → Currency (currency)
+  → FinancialYear (financial_year)
+  → Voucher (voucher) - OneToOne
+  → SalesOrder (sales_order)
+  → PurchaseOrder (purchase_order)
+  → InvoiceLine (lines)
+  → Shipment (shipments)
+Unique Constraints: company + invoice_number
+Indexes: company+invoice_number, company+party+status, company+invoice_date, 
+         company+due_date, company+invoice_type+status, company+status
+Notes: Every invoice creates a voucher for accounting
+
+InvoiceLine
+-----------
+Location: apps/invoice/models.py
+Inherits: BaseModel
+Purpose: Invoice line items
+Fields:
+  - invoice (FK → Invoice, CASCADE)
+  - line_no (PositiveIntegerField)
+  - item (FK → StockItem, PROTECT)
+  - description (CharField[255])
+  - quantity (Decimal[12,3]) - MUST BE POSITIVE
+  - uom (FK → UnitOfMeasure, PROTECT)
+  - unit_rate (Decimal[14,4])
+  - discount_pct (Decimal[5,2])
+  - tax_rate (Decimal[6,2])
+  - line_total (Decimal[16,2]) - After discount before tax
+  - tax_amount (Decimal[16,2])
+Relationships:
+  → Invoice (invoice)
+  → StockItem (item)
+  → UnitOfMeasure (uom)
+  → ShipmentItem (shipment_items)
+Check Constraints: quantity > 0
+Indexes: invoice+line_no
+Ordering: invoice, line_no
+
+================================================================================
+11. HR & PAYROLL
+================================================================================
+
+Department (hr app)
+-------------------
+Location: apps/hr/models.py
+Inherits: CompanyScopedModel
+Purpose: Department/team organization
+Fields:
+  - name (CharField[100])
+  - code (CharField[50], indexed)
+  - manager (FK → Employee, SET_NULL, optional)
+  - parent (FK → self, PROTECT, optional) - Department hierarchy
+  - is_active (BooleanField)
+Relationships:
+  → Employee (manager/managed_departments)
+  → Department (parent/sub_departments)
+  → Employee (employees)
+Unique Constraints: company + code
+Indexes: company+code
+
+Employee (hr app)
+-----------------
+Location: apps/hr/models.py
+Inherits: CompanyScopedModel
+Purpose: Full HR employee master (prefer over users.Employee)
+Fields:
+  - employee_code (CharField[50], indexed)
+  - user (FK → User, SET_NULL, optional) - Link to login account
+  - first_name, last_name (CharField[100])
+  - email (EmailField)
+  - phone (CharField[20])
+  - department (FK → Department, SET_NULL, optional)
+  - designation (CharField[100])
+  - date_of_joining (DateField)
+  - date_of_exit (DateField, optional)
+  - is_active (BooleanField)
+Relationships:
+  → User (user)
+  → Department (department)
+  → EmployeeLedger (ledger_link)
+  → EmployeePayStructure (pay_structure)
+  → PayrollRun (indirectly via pay structure)
+Unique Constraints: company + employee_code
+Indexes: company+employee_code, company+department+is_active
+Property: name - Full name (first + last)
+
+EmployeeLedger
+--------------
+Location: apps/hr/models.py
+Inherits: BaseModel
+Purpose: Links employee to accounting ledger
+Fields:
+  - employee (OneToOne → Employee, CASCADE)
+  - ledger (FK → Ledger, PROTECT)
+Relationships:
+  → Employee (employee)
+  → Ledger (ledger)
+Notes: Every employee has associated expense/payable ledger
+
+PayHead
+-------
+Location: apps/hr/models.py
+Inherits: CompanyScopedModel
+Purpose: Salary components (earnings/deductions)
+Fields:
+  - name (CharField[100])
+  - code (CharField[50], indexed)
+  - pay_type (CharField[20]) - EARNING, DEDUCTION, REIMBURSEMENT
+  - is_taxable (BooleanField) - Whether component is taxable
+  - is_fixed (BooleanField) - Fixed amount vs percentage-based
+  - calculation_formula (TextField) - Formula for percentage-based
+  - ledger (FK → Ledger, PROTECT, optional) - Accounting ledger for component
+  - is_active (BooleanField)
+Relationships:
+  → Ledger (ledger)
+  → EmployeePayStructure (employee_assignments)
+Unique Constraints: company + code
+Indexes: company+code, company+pay_type
+
+EmployeePayStructure
+--------------------
+Location: apps/hr/models.py
+Inherits: BaseModel
+Purpose: Pay structure for individual employees (time-bounded for revisions)
+Fields:
+  - employee (FK → Employee, CASCADE)
+  - pay_head (FK → PayHead, CASCADE)
+  - amount (Decimal[14,2]) - Fixed amount or percentage value
+  - effective_from (DateField)
+  - effective_to (DateField, optional) - Null = current
+Relationships:
+  → Employee (employee)
+  → PayHead (pay_head)
+Indexes: employee+effective_from, pay_head+effective_from
+
+PayrollRun
+----------
+Location: apps/hr/models.py
+Inherits: CompanyScopedModel
+Purpose: Monthly payroll processing batch
+Fields:
+  - name (CharField[100]) - E.g., "January 2024 Payroll"
+  - pay_period_start, pay_period_end (DateField)
+  - payment_date (DateField) - When salaries paid
+  - status (CharField[20]) - DRAFT, PROCESSED, POSTED, PAID, CANCELLED
+  - voucher (OneToOne → Voucher, PROTECT, optional) - Accounting voucher for payroll
+  - total_earnings, total_deductions, net_pay (Decimal[16,2])
+  - notes (TextField)
+Relationships:
+  → Voucher (voucher) - OneToOne
+Check Constraints: pay_period_start < pay_period_end
+Indexes: company+pay_period_start+pay_period_end, company+status
+Notes: Creates single accounting voucher for entire payroll run
+
+================================================================================
+12. LOGISTICS & SHIPPING
+================================================================================
+
+Carrier
+-------
+Location: apps/logistics/models.py
+Inherits: CompanyScopedModel
+Purpose: Shipping carrier/transporter master
+Fields:
+  - name (CharField[100])
+  - code (CharField[50], indexed)
+  - phone (CharField[20])
+  - email (EmailField)
+  - gstin (CharField[15]) - GST Number for transporter
+  - transport_id (CharField[50]) - Transporter ID for e-way bill
+  - is_active (BooleanField)
+Relationships:
+  → Shipment (shipments)
+Unique Constraints: company + code
+Indexes: company+code, company+is_active
+
+Shipment
+--------
+Location: apps/logistics/models.py
+Inherits: CompanyScopedModel
+Purpose: Shipment/delivery tracking
+Fields:
+  - shipment_number (CharField[50], indexed)
+  - carrier (FK → Carrier, PROTECT)
+  - tracking_number (CharField[100]) - Carrier's tracking number
+  - shipped_date (DateField)
+  - expected_delivery (DateField, optional)
+  - actual_delivery (DateField, optional)
+  - status (CharField[20]) - DRAFT, READY, PICKED, IN_TRANSIT, OUT_FOR_DELIVERY, DELIVERED, CANCELLED, RETURNED
+  - sales_order (FK → SalesOrder, SET_NULL, optional)
+  - invoice (FK → Invoice, SET_NULL, optional)
+  - from_address (FK → Address, PROTECT) - Origin
+  - to_address (FK → PartyAddress, PROTECT) - Destination
+  - vehicle_number (CharField[50])
+  - driver_name, driver_phone (CharField[100/20])
+  - eway_bill_number (CharField[50]) - E-way bill for India
+  - notes (TextField)
+Relationships:
+  → Carrier (carrier)
+  → SalesOrder (sales_order)
+  → Invoice (invoice)
+  → Address (from_address)
+  → PartyAddress (to_address)
+  → ShipmentItem (items)
+Unique Constraints: company + shipment_number
+Indexes: company+shipment_number, company+status, company+shipped_date, 
+         sales_order, invoice
+
+ShipmentItem
+------------
+Location: apps/logistics/models.py
+Inherits: BaseModel
+Purpose: Line items in shipment
+Fields:
+  - shipment (FK → Shipment, CASCADE)
+  - line_no (PositiveIntegerField)
+  - item (FK → StockItem, PROTECT)
+  - quantity (Decimal[12,3]) - MUST BE POSITIVE
+  - uom (FK → UnitOfMeasure, PROTECT)
+  - order_item (FK → OrderItem, SET_NULL, optional)
+  - invoice_line (FK → InvoiceLine, SET_NULL, optional)
+  - package_number (CharField[50]) - Package/box number
+  - batch (FK → StockBatch, PROTECT, optional)
+Relationships:
+  → Shipment (shipment)
+  → StockItem (item)
+  → UnitOfMeasure (uom)
+  → OrderItem (order_item)
+  → InvoiceLine (invoice_line)
+  → StockBatch (batch)
+Check Constraints: quantity > 0
+Indexes: shipment+line_no, item
+Ordering: shipment, line_no
+
+================================================================================
+13. PORTAL & RETAILER ACCESS
+================================================================================
+
+RetailerUser
+------------
+Location: apps/portal/models.py
+Inherits: BaseModel
+Purpose: Login-enabled user for retailer/customer ordering
+Fields:
+  - user (OneToOne → User, CASCADE) - Login account
+  - party (FK → Party, CASCADE) - Business entity represented
+  - is_primary_contact (BooleanField) - Primary contact for retailer
+  - can_place_orders (BooleanField) - Permission to create orders
+  - can_view_balance (BooleanField) - View account balance
+  - can_view_statements (BooleanField) - View ledger statements
+Relationships:
+  → User (user) - OneToOne
+  → Party (party)
+  → RetailerCompanyAccess (company_accesses)
+Indexes: party, is_primary_contact
+Notes: Links User account to Party for portal access
+
+RetailerCompanyAccess
+---------------------
+Location: apps/portal/models.py
+Inherits: BaseModel
+Purpose: Retailer approval to place orders with company
+Fields:
+  - retailer (FK → RetailerUser, CASCADE)
+  - company (FK → Company, CASCADE)
+  - status (CharField[20]) - PENDING, APPROVED, BLOCKED, REJECTED
+  - approved_by (FK → User, SET_NULL, optional)
+  - approved_at (DateTimeField, optional)
+  - notes (TextField) - Internal notes about access request
+Relationships:
+  → RetailerUser (retailer)
+  → Company (company)
+  → User (approved_by)
+Unique Constraints: retailer + company
+Indexes: retailer+status, company+status, status
+Notes: Enables marketplace discovery and approval workflow
+
+================================================================================
+14. SYSTEM & AUDIT
+================================================================================
+
+AuditLog
+--------
+Location: apps/system/models.py
+Inherits: BaseModel
+Purpose: Comprehensive audit trail for all critical actions
+Fields:
+  - company (FK → Company, SET_NULL, optional)
+  - actor_user (FK → User, SET_NULL, optional) - Who performed action
+  - action_type (CharField[50]) - CREATE, UPDATE, DELETE, LOGIN, LOGOUT, POST, etc.
+  - object_type (CharField[100]) - Model name (Invoice, Voucher, etc.)
+  - object_id (UUIDField) - UUID of target object
+  - object_repr (CharField[255]) - String representation
+  - changes (JSONField) - JSON diff (before/after)
+  - ip_address (GenericIPAddressField, optional)
+  - user_agent (CharField[255])
+  - metadata (JSONField) - Additional context data
+Relationships:
+  → Company (company)
+  → User (actor_user)
+Indexes: company+created_at, actor_user+created_at, object_type+object_id, action_type+created_at
+Ordering: -created_at (newest first)
+
+IntegrationEvent
+----------------
+Location: apps/system/models.py
+Inherits: CompanyScopedModel
+Purpose: Outbound integration event queue (webhook/API events)
+Fields:
+  - event_type (CharField[100], indexed) - E.g., 'invoice.created', 'order.updated'
+  - payload (JSONField) - Event data to send
+  - status (CharField[20]) - PENDING, PROCESSING, SUCCESS, FAILED, RETRY
+  - attempts (PositiveIntegerField) - Number of processing attempts
+  - max_attempts (PositiveIntegerField, default=3) - Max retries
+  - last_attempt_at (DateTimeField, optional)
+  - next_retry_at (DateTimeField, optional) - Scheduled retry time
+  - response (JSONField, optional) - Response from external system
+  - error_message (TextField) - Error if processing failed
+  - source_object_type (CharField[100]) - Source model
+  - source_object_id (UUIDField, optional) - Source object UUID
+  - processed_at (DateTimeField, optional) - Success timestamp
+Relationships:
+  → Company (company)
+Indexes: company+status+next_retry_at, company+event_type, status+next_retry_at, 
+         source_object_type+source_object_id, company+source_object_id
+Ordering: -created_at
+Notes: Supports retry mechanism for failed events
+
+IdempotencyKey
+--------------
+Location: apps/system/models.py
+Inherits: BaseModel
+Purpose: Tracks idempotency keys for API operations (prevents duplicate posting)
+Fields:
+  - key (CharField[255], unique, indexed) - Unique idempotency key from client
+  - voucher (OneToOne → Voucher, PROTECT) - Voucher created for this key
+  - company (FK → Company, PROTECT)
+Relationships:
+  → Voucher (voucher) - OneToOne
+  → Company (company)
+Unique Constraints: key
+Indexes: company+key, company+created_at
+Notes:
+  - Critical for API retries and webhook deliveries
+  - Before posting, check if key exists
+  - If exists, return existing voucher
+  - If not, create key record inside transaction
+
+================================================================================
+MISSING MODELS & GAPS ANALYSIS
+================================================================================
+
+Models Referenced but Not Found:
+---------------------------------
+1. StockBalance
+   - Referenced in: test_fifo_stock_movement.py
+   - Purpose: Likely intended for real-time stock balance caching
+   - Current Approach: Compute balance from StockMovement
+   - Status: MISSING - Design decision needed (compute vs cache)
+
+2. LedgerBalance
+   - Referenced in: Some test files
+   - Purpose: Real-time ledger balance caching
+   - Current Approach: Compute from VoucherLine
+   - Status: MISSING - Design decision needed
+
+Models with Incomplete Implementation:
+---------------------------------------
+1. Reporting App (apps/reporting/models.py)
+   - Currently empty placeholder
+   - Future models: Report, Dashboard, ReportSchedule, AnalyticsSnapshot
+
+Fields Noted as Missing (from tests):
+--------------------------------------
+1. Voucher.posted_at
+   - Referenced in: Multiple test files
+   - Current: Uses status='POSTED' instead
+   - Impact: Timestamp of posting not explicitly tracked
+   - Workaround: Use updated_at when status changes to POSTED
+
+2. Sequence.zero_pad
+   - Referenced in: Old test code
+   - Current: Removed from model
+   - Impact: Number formatting done in service layer
+
+Relationship Completeness:
+--------------------------
+✅ All major relationships properly defined
+✅ Cascading deletes configured appropriately
+✅ Reverse relationships named correctly
+✅ Multi-tenancy (company) properly scoped
+✅ Financial Year linkages complete
+✅ Ledger-Party integration solid
+
+Index Coverage:
+---------------
+✅ All foreign keys have indexes
+✅ Compound queries indexed (company + status, company + date)
+✅ Common filter fields indexed (is_active, status, date fields)
+✅ Unique constraints properly defined
+
+Constraints Coverage:
+---------------------
+✅ Unique constraints on business keys (code, sku, voucher_number)
+✅ Check constraints on business logic (positive amounts, date ranges)
+✅ One-to-one relationships enforced (Party-Ledger, Employee-EmployeeLedger)
+✅ Polymorphic constraints (OrderItem must have exactly one parent)
+
+Data Integrity:
+---------------
+✅ Soft deletes where needed (is_deleted, is_active flags)
+✅ Audit timestamps (created_at, updated_at) on all models
+✅ Financial year validation (no overlaps, start < end)
+✅ Double-entry validation (DR = CR) enforced at service layer
+✅ Stock movements always linked to vouchers
+
+================================================================================
+MODEL DEPENDENCY GRAPH (Simplified)
+================================================================================
+
+Core Layer:
+  BaseModel
+    └── CompanyScopedModel
+          └── [Most business models]
+
+Authentication Layer:
+  User
+    ├── CompanyUser (User → Company)
+    ├── RetailerUser (User → Party)
+    └── Employee (User, optional)
+
+Company & Multi-Tenancy:
+  Company
+    ├── Currency (base_currency)
+    ├── Address
+    ├── CompanyFeature
+    ├── CompanyUser
+    ├── FinancialYear
+    └── Sequence
+
+Accounting Core:
+  AccountGroup (hierarchical)
+    └── Ledger
+          ├── TaxLedger
+          └── CostCenter (optional)
+
+Party Management:
+  Party
+    ├── Ledger (OneToOne, required)
+    ├── PartyAddress
+    └── PartyBankAccount
+
+Inventory Core:
+  UnitOfMeasure (global)
+  StockItem
+    ├── UOM (FK)
+    ├── StockBatch
+    ├── PriceList → ItemPrice
+    └── StockMovement
+          ├── Godown (from/to)
+          ├── StockBatch (optional)
+          └── Voucher (required)
+
+Transaction Processing:
+  VoucherType
+    └── Voucher
+          ├── FinancialYear
+          ├── VoucherLine[]
+          │     ├── Ledger
+          │     ├── CostCenter (optional)
+          │     └── Against Voucher (optional)
+          ├── StockMovement[] (if inventory)
+          └── Invoice (OneToOne, optional)
+
+Order Management:
+  SalesOrder / PurchaseOrder
+    ├── Party (Customer/Supplier)
+    ├── Currency
+    └── OrderItem[]
+          └── StockItem
+
+Invoicing:
+  Invoice
+    ├── Party
+    ├── Voucher (OneToOne)
+    ├── SalesOrder / PurchaseOrder (optional)
+    ├── InvoiceLine[]
+    └── Shipment[]
+
+HR & Payroll:
+  Department
+    └── Employee
+          ├── User (optional)
+          ├── EmployeeLedger → Ledger
+          └── EmployeePayStructure[]
+                └── PayHead
+  PayrollRun → Voucher
+
+Logistics:
+  Carrier
+    └── Shipment
+          ├── SalesOrder (optional)
+          ├── Invoice (optional)
+          ├── Address (from)
+          ├── PartyAddress (to)
+          └── ShipmentItem[]
+                └── StockItem
+
+Portal:
+  RetailerUser (User → Party)
+    └── RetailerCompanyAccess
+          └── Company
+
+System & Audit:
+  AuditLog (all actions)
+  IntegrationEvent (outbound webhooks)
+  IdempotencyKey → Voucher
+
+================================================================================
+CRITICAL BUSINESS RULES
+================================================================================
+
+1. Multi-Tenancy:
+   - All business data MUST be scoped to company
+   - Use CompanyScopedModel for all company-specific data
+   - Global masters: Currency, UnitOfMeasure
+
+2. Party-Ledger Integration:
+   - Every Party MUST have exactly ONE Ledger (OneToOne)
+   - VoucherLine uses ledger (not party directly)
+   - Ensures accounting integrity
+
+3. Stock Movement:
+   - NEVER store quantity on StockItem
+   - All movements MUST link to Voucher
+   - Balance = Σ(movements) at query time
+   - Quantity MUST be positive (direction via from/to godown)
+
+4. Double-Entry Accounting:
+   - Every Voucher MUST balance: Σ(DR) = Σ(CR)
+   - Validated at service layer before posting
+   - VoucherLine amounts MUST be positive
+
+5. Financial Year:
+   - Only ONE is_current=True per company
+   - No overlapping date ranges per company
+   - Posted vouchers tied to FY (immutable)
+
+6. Sequence Generation:
+   - Compound keys: {company_id}:{code}:{fy_id}
+   - Thread-safe: Use select_for_update()
+   - Prevents cross-FY/cross-type collisions
+
+7. Voucher Posting:
+   - DRAFT → POSTED is one-way (no edit after post)
+   - Reversal creates new voucher with reversed_voucher link
+   - Idempotency keys prevent duplicate posting
+
+8. Opening Balances:
+   - Ledger opening_balance_fy REQUIRED
+   - Best practice: Create opening voucher instead of using field
+   - opening_balance field kept for UI convenience
+
+================================================================================
+END OF DOCUMENTATION
+================================================================================

@@ -1,0 +1,377 @@
+Below is a complete, production-grade posting design for vouchers + stock plus a concrete Django service implementation you can drop into services/posting.py. It covers validations, double-entry checks, inventory allocation, concurrency controls, idempotency, audit, events, and rollback behavior.
+
+Use this as the canonical posting engine: every place in the app that needs to “post” a voucher or invoice should call these services — views stay thin, services do the work.
+
+Summary (one-line)
+
+Posting = validate → reserve/allocate inventory (if needed) → create accounting entries (voucher + lines) → create stock movements → update read-models (stock balances) → mark source documents posted → audit & emit events — all inside safe DB transactions with careful locking and idempotency.
+
+Preconditions & assumptions
+
+PostgreSQL (transactions & SELECT ... FOR UPDATE).
+
+Models exist as in the schema you approved (Voucher, VoucherLine, Invoice, InvoiceLine, StockMovement, StockBalance, StockBatch, Sequence, StockReservation, SalesOrder, OrderItem).
+
+Sequences used for numbering (Sequence table).
+
+Business rules decide which VoucherType maps to inventory movements (voucher_type.is_inventory).
+
+Posting must ensure double-entry balance (sum DR == sum CR).
+
+Inventory allocation uses FIFO by default (configurable).
+
+Background/async notification via IntegrationEvent (created synchronously, processed by worker if configured).
+
+Idempotency supported via voucher.status and optional idempotency_key.
+
+High-level flow
+
+Validate source document (e.g., Invoice) is DRAFT/READY_TO_POST.
+
+Build voucher lines (DR/CR) from invoice/other source.
+
+Validate double-entry totals (DR == CR).
+
+Acquire sequence lock and allocate voucher number.
+
+Start DB transaction.
+
+Re-validate state inside transaction (race-safety).
+
+Insert Voucher (status=POSTED) and VoucherLines.
+
+If voucher is inventory-affecting:
+
+For each invoice line / order item: check availability (batches), allocate (reserve/consume), create StockMovement rows.
+
+Update StockBalance rows with SELECT FOR UPDATE and adjust quantities.
+
+Mark source docs posted and link voucher.
+
+Create AuditLog and IntegrationEvent.
+
+Commit transaction. If failure, rollback entirely.
+
+Notify async systems (worker) if needed.
+
+Concurrency, Idempotency & Safety
+
+Use transaction.atomic() for full rollback on error.
+
+Use select_for_update() on:
+
+Sequence row (to increment safely).
+
+StockBalance rows (to avoid race conditions).
+
+Batch rows where batch-level allocation is required.
+
+Use optimistic checks: re-check voucher.status inside transaction and abort if already posted.
+
+Provide idempotency_key param for external APIs; store and prevent duplicate posts.
+
+Optionally use Postgres advisory locks for coarse-grained locking (e.g., advisory_lock(company_id)), useful when heavy concurrency expected.
+
+Validation rules (examples)
+
+Voucher lines DR == CR.
+
+All referenced masters exist and are active (ledger, item, batch, godown).
+
+Stock available >= required when consuming inventory (unless negative stock allowed).
+
+Posting period open (financial year not closed).
+
+VoucherType.is_inventory → must produce StockMovements.
+
+Error handling
+
+Raise explicit exceptions: PostingError, InsufficientStock, UnbalancedVoucher, AlreadyPosted.
+
+Log errors to AuditLog and optionally create a failed IntegrationEvent.
+
+Rollback any modifications if any step fails.
+
+Implementation — Django service (single file)
+
+Place in apps/core/services/posting.py (or apps/accounting/services/posting.py). This is illustrative but ready-to-use; adapt to your exact import paths and utility functions.
+
+# apps/core/services/posting.py
+from decimal import Decimal
+from typing import Optional, List, Dict
+from django.db import transaction
+from django.db.models import F, Sum
+from django.utils import timezone
+from django.conf import settings
+
+from company.models import Sequence, FinancialYear
+from voucher.models import Voucher, VoucherLine, VoucherType
+from invoice.models import Invoice, InvoiceLine
+from inventory.models import StockMovement, StockBalance, StockBatch, StockReservation, Godown
+from accounting.models import Ledger
+from system.models import AuditLog, IntegrationEvent
+from django.core.exceptions import ObjectDoesNotExist
+
+# Exceptions
+class PostingError(Exception):
+    pass
+
+class AlreadyPosted(PostingError):
+    pass
+
+class UnbalancedVoucher(PostingError):
+    pass
+
+class InsufficientStock(PostingError):
+    pass
+
+# Helper: get and bump sequence (locks row)
+def next_sequence_value(company, key: str) -> str:
+    seq = Sequence.objects.select_for_update().get(company=company, key=key)
+    seq.last_value += 1
+    seq.save(update_fields=["last_value"])
+    # format: prefix + number padded
+    return f"{seq.prefix or ''}{seq.last_value:06d}"
+
+# Helper: validate double-entry
+def validate_double_entry(lines: List[Dict]) -> None:
+    """
+    lines: list of { 'ledger': Ledger, 'amount': Decimal, 'entry_type': 'DR' or 'CR' }
+    """
+    total_dr = sum(l["amount"] for l in lines if l["entry_type"] == "DR")
+    total_cr = sum(l["amount"] for l in lines if l["entry_type"] == "CR")
+    if Decimal(total_dr) != Decimal(total_cr):
+        raise UnbalancedVoucher(f"DR ({total_dr}) != CR ({total_cr})")
+
+# Helper: lock and update stock balance
+def adjust_stock_balances(company, updates: List[Dict]):
+    """
+    updates: list of { 'item_id': uuid, 'godown_id': uuid, 'delta_qty': Decimal, 'batch_id': Optional[uuid] }
+    This function will:
+      - SELECT FOR UPDATE the StockBalance rows for the item/godown (and batch if provided).
+      - Create rows if missing and CASCADE create.
+      - Update quantity (+= delta_qty). If resulting qty < 0 -> raise InsufficientStock unless negative allowed.
+    """
+    # group updates by (item_id, godown_id, batch_id)
+    with transaction.atomic():
+        for u in updates:
+            item = u["item_id"]
+            godown = u["godown_id"]
+            batch = u.get("batch_id")
+            delta = Decimal(u["delta_qty"])
+            qs = StockBalance.objects.select_for_update().filter(
+                company=company, item_id=item, godown_id=godown
+            )
+            if batch:
+                qs = qs.filter(batch_id=batch)
+
+            sb = qs.first()
+            if sb is None:
+                # create new balance record (locked)
+                sb = StockBalance.objects.create(
+                    company=company, item_id=item, godown_id=godown, batch_id=batch, quantity=Decimal("0")
+                )
+            new_qty = sb.quantity + delta
+            if new_qty < 0:
+                raise InsufficientStock(f"Insufficient stock for item {item} in godown {godown} (need {abs(delta)})")
+            sb.quantity = new_qty
+            sb.last_updated = timezone.now()
+            sb.save(update_fields=["quantity", "last_updated"])
+
+# Helper: allocate stock batches (FIFO)
+def allocate_batches_fifo(company, item_id, required_qty, prefer_batch_id=None) -> List[Dict]:
+    """
+    Return list of allocations: [{'batch_id': uuid, 'quantity': Decimal}]
+    Raises InsufficientStock if not enough.
+    """
+    need = Decimal(required_qty)
+    allocations = []
+    # Prefer specific batch first
+    batches_qs = StockBatch.objects.filter(company=company, item_id=item_id, is_active=True).order_by("mfg_date", "id")
+    if prefer_batch_id:
+        preferred = batches_qs.filter(id=prefer_batch_id)
+        if preferred.exists():
+            b = preferred.first()
+            # check StockBalance for that batch across godowns
+            bal = StockBalance.objects.filter(company=company, item_id=item_id, batch=b).aggregate(total=Sum("quantity"))["total"] or Decimal(0)
+            take = min(bal, need)
+            if take > 0:
+                allocations.append({"batch_id": b.id, "quantity": take})
+                need -= take
+    if need > 0:
+        # iterate batches FIFO
+        for b in batches_qs:
+            bal = StockBalance.objects.filter(company=company, item_id=item_id, batch=b).aggregate(total=Sum("quantity"))["total"] or Decimal(0)
+            if bal <= 0:
+                continue
+            take = min(bal, need)
+            allocations.append({"batch_id": b.id, "quantity": take})
+            need -= take
+            if need <= 0:
+                break
+    if need > 0:
+        raise InsufficientStock(f"Not enough stock for item {item_id}. Missing {need}")
+    return allocations
+
+# Core: create voucher and post inventory in same transaction
+def post_voucher(voucher_id, posted_by_user, idempotency_key: Optional[str] = None):
+    """
+    Post an existing Voucher (draft) to POSTED.
+    1. Validate.
+    2. Create voucher_number via Sequence.
+    3. Insert VoucherLines (already present or built).
+    4. If inventory-affecting: create StockMovement rows and adjust StockBalance.
+    """
+    with transaction.atomic():
+        voucher = Voucher.objects.select_for_update().get(id=voucher_id)
+
+        if voucher.status == "POSTED":
+            raise AlreadyPosted("Voucher already posted")
+
+        # Basic validation
+        lines = list(voucher.voucherline_set.all())
+        # build list for validation
+        line_data = []
+        for l in lines:
+            line_data.append({"ledger": l.ledger, "amount": l.amount, "entry_type": l.entry_type})
+        validate_double_entry(line_data)
+
+        # reserve sequence and set number
+        seq_key = f"voucher:{voucher.company.id}:{voucher.voucher_type.code}"
+        voucher_number = next_sequence_value(voucher.company, seq_key)
+        voucher.voucher_number = voucher_number
+
+        # If voucher_type is inventory-affecting -> produce stock movements
+        if voucher.voucher_type.is_inventory:
+            # Build required stock movements from voucher lines or from linked source objects.
+            # Typical path: voucher links to invoice -> get invoice lines and allocate.
+            # Example: assume voucher has attribute `source_invoice_id` (nullable)
+            if hasattr(voucher, "source_invoice_id") and voucher.source_invoice_id:
+                invoice = Invoice.objects.select_for_update().get(id=voucher.source_invoice_id)
+                # For each invoice line -> allocate batches and create movements
+                stock_updates = []  # collect {item_id, godown_id, delta_qty, batch_id}
+                movements = []
+                for il in invoice.invoiceline_set.all():
+                    # decide godown (default or item default) - use company default godown
+                    godown = Godown.objects.filter(company=voucher.company).first()
+                    allocations = allocate_batches_fifo(voucher.company, il.item_id, il.quantity)
+                    for alloc in allocations:
+                        # reduce stock from godown -> quantity negative delta
+                        movements.append(StockMovement(
+                            company=voucher.company,
+                            voucher=voucher,  # not saved yet
+                            item_id=il.item_id,
+                            from_godown=godown,
+                            to_godown=None,
+                            quantity=alloc["quantity"],
+                            rate=il.unit_rate,
+                            batch_id=alloc["batch_id"],
+                            movement_type="OUT"
+                        ))
+                        stock_updates.append({
+                            "item_id": il.item_id,
+                            "godown_id": godown.id,
+                            "batch_id": alloc["batch_id"],
+                            "delta_qty": -alloc["quantity"]
+                        })
+                # persist voucher first to get FK id for movements
+                voucher.status = "POSTED"
+                voucher.posted_at = timezone.now()
+                voucher.save(update_fields=["voucher_number", "status", "posted_at"])
+                # attach voucher FK to movements and bulk create
+                for m in movements:
+                    m.voucher = voucher
+                StockMovement.objects.bulk_create(movements)
+                # now adjust balances (select_for_update inside)
+                adjust_stock_balances(voucher.company, stock_updates)
+                # link voucher -> invoice to mark posted
+                invoice.status = "POSTED"
+                invoice.related_voucher = voucher
+                invoice.save(update_fields=["status", "related_voucher"])
+            else:
+                # Generic inventory voucher without invoice: create movements from voucher lines meta
+                # Implementation depends on your encoding
+                raise PostingError("Inventory voucher without source invoice not implemented.")
+        else:
+            # Non-inventory voucher: simple post
+            voucher.status = "POSTED"
+            voucher.posted_at = timezone.now()
+            voucher.save(update_fields=["voucher_number", "status", "posted_at"])
+
+        # Create audit log
+        AuditLog.objects.create(
+            company=voucher.company,
+            actor_user=posted_by_user,
+            action_type="VOUCHER_POST",
+            object_type="Voucher",
+            object_id=voucher.id,
+            changes={"voucher_number": voucher_number, "status": "POSTED"},
+            created_at=timezone.now()
+        )
+
+        # Create integration event for downstream systems
+        IntegrationEvent.objects.create(
+            company=voucher.company,
+            event_type="voucher.posted",
+            payload={"voucher_id": str(voucher.id)},
+            status="PENDING"
+        )
+
+        return voucher
+
+
+Notes about the code:
+
+allocate_batches_fifo reads batch balances (read-only) and raises InsufficientStock if not enough. The actual consumption is enforced in adjust_stock_balances() which SELECT FOR UPDATE the StockBalance rows and writes the delta.
+
+The next_sequence_value locks the Sequence row so concurrent posts don't get the same number.
+
+Everything that mutates accounting and inventory is inside one transaction.atomic() call to guarantee ACID.
+
+To reduce contention in extremely high throughput systems, split into two phases: create the voucher (immediately) then run inventory movement & balance updates via a worker with strong locking; but this increases the complexity and latency for callers.
+
+Special considerations & improvements
+
+Batch-level locking: If you need exact per-batch allocation across multiple godowns, SELECT FOR UPDATE the StockBalance rows filtered by batch_id + godown_id to avoid over-allocating the same batch.
+
+Performance: For heavy write load, update StockBalance using DB UPDATE ... RETURNING and avoid row-by-row updates where possible; use bulk_create for StockMovement.
+
+Compensating operations: For partial failures in external integrations (e.g., shipping provider), the core financial + inventory posting must remain committed; external failures should be handled by compensating tasks, not by rolling back core posting.
+
+Idempotency: Save idempotency_key on Voucher or a separate table to prevent repeated posting attempts from clients (especially relevant for webhook/3rd-party retries).
+
+Audit & traceability: Store created_by, posted_by, posted_at, and source_document_id on Voucher for traceability.
+
+Soft deletes & immutability: Use PROTECT for master-level deletes once transactions reference them.
+
+Read models: Build additional read optimized tables (e.g., ARBalance, APBalance) updated by posting engine to accelerate reporting.
+
+Testing: Add unit & integration tests for:
+
+double-entry validation
+
+posting with sufficient stock
+
+posting with insufficient stock (assert rollback)
+
+concurrent posting to ensure seq uniqueness and no negative stock
+
+Checklist you should enforce in code
+
+ Financial year open for posting.
+
+ Voucher type allows posting (not archived).
+
+ Voucher lines exist and DR==CR.
+
+ Sequence obtained under lock.
+
+ Stock allocation validated and applied under select_for_update.
+
+ All writes in transaction.atomic().
+
+ Audit log + IntegrationEvent created.
+
+ Notify asynchronous workers (for ledger recalculation, notifications).
+
+ Tests for failure & concurrency.

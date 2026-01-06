@@ -1,0 +1,282 @@
+Below is only code — clean, production-grade — for a GST engine covering:
+
+GST tax calculation (CGST / SGST / IGST)
+
+Invoice-level & line-level tax breakup
+
+Posting GST to ledgers
+
+GST return data models (GSTR-1, GSTR-3B)
+
+Return aggregation logic
+
+Tests
+
+No explanations unless required to understand the code.
+
+1️⃣ GST MASTER MODELS
+gst/models.py
+from django.db import models
+from core.models.base import CompanyScopedModel, BaseModel
+
+class GSTTaxRate(CompanyScopedModel):
+    """
+    Example:
+    rate = 18
+    cgst = 9
+    sgst = 9
+    igst = 18
+    """
+    name = models.CharField(max_length=50)
+    rate = models.DecimalField(max_digits=5, decimal_places=2)
+    cgst = models.DecimalField(max_digits=5, decimal_places=2)
+    sgst = models.DecimalField(max_digits=5, decimal_places=2)
+    igst = models.DecimalField(max_digits=5, decimal_places=2)
+    is_active = models.BooleanField(default=True)
+
+
+class GSTPlaceOfSupply(BaseModel):
+    state_code = models.CharField(max_length=2)
+    state_name = models.CharField(max_length=100)
+
+
+class GSTLedgerMapping(CompanyScopedModel):
+    """
+    Maps tax type to ledger
+    """
+    tax_type = models.CharField(
+        max_length=10,
+        choices=[("CGST", "CGST"), ("SGST", "SGST"), ("IGST", "IGST")]
+    )
+    ledger = models.ForeignKey("accounting.Ledger", on_delete=models.PROTECT)
+
+2️⃣ GST CALCULATION ENGINE
+gst/services/calculator.py
+from decimal import Decimal
+
+def calculate_gst(
+    taxable_value: Decimal,
+    tax_rate,
+    is_inter_state: bool
+):
+    """
+    Returns dict with CGST / SGST / IGST breakup
+    """
+    result = {
+        "taxable_value": taxable_value,
+        "cgst": Decimal("0"),
+        "sgst": Decimal("0"),
+        "igst": Decimal("0"),
+        "total_tax": Decimal("0"),
+        "total_value": Decimal("0")
+    }
+
+    if is_inter_state:
+        igst = taxable_value * tax_rate.igst / Decimal("100")
+        result["igst"] = igst
+        result["total_tax"] = igst
+    else:
+        cgst = taxable_value * tax_rate.cgst / Decimal("100")
+        sgst = taxable_value * tax_rate.sgst / Decimal("100")
+        result["cgst"] = cgst
+        result["sgst"] = sgst
+        result["total_tax"] = cgst + sgst
+
+    result["total_value"] = taxable_value + result["total_tax"]
+    return result
+
+3️⃣ GST INVOICE TAX STORAGE
+gst/models.py (continued)
+class InvoiceGSTSummary(BaseModel):
+    invoice = models.OneToOneField("invoice.Invoice", on_delete=models.CASCADE)
+    taxable_value = models.DecimalField(max_digits=16, decimal_places=2)
+    cgst = models.DecimalField(max_digits=16, decimal_places=2, default=0)
+    sgst = models.DecimalField(max_digits=16, decimal_places=2, default=0)
+    igst = models.DecimalField(max_digits=16, decimal_places=2, default=0)
+    total_tax = models.DecimalField(max_digits=16, decimal_places=2)
+    total_value = models.DecimalField(max_digits=16, decimal_places=2)
+
+
+class InvoiceGSTLine(BaseModel):
+    invoice_line = models.OneToOneField("invoice.InvoiceLine", on_delete=models.CASCADE)
+    tax_rate = models.ForeignKey(GSTTaxRate, on_delete=models.PROTECT)
+    taxable_value = models.DecimalField(max_digits=16, decimal_places=2)
+    cgst = models.DecimalField(max_digits=16, decimal_places=2, default=0)
+    sgst = models.DecimalField(max_digits=16, decimal_places=2, default=0)
+    igst = models.DecimalField(max_digits=16, decimal_places=2, default=0)
+
+4️⃣ GST APPLICATION DURING INVOICE POSTING
+gst/services/apply_tax.py
+from decimal import Decimal
+from gst.services.calculator import calculate_gst
+from gst.models import InvoiceGSTSummary, InvoiceGSTLine
+
+def apply_gst_to_invoice(invoice, company_state_code):
+    """
+    Applies GST to invoice and creates GST summary + lines
+    """
+    taxable_total = Decimal("0")
+    cgst = sgst = igst = Decimal("0")
+
+    for line in invoice.invoiceline_set.all():
+        tax_rate = line.tax_rate
+        taxable_value = line.quantity * line.unit_rate
+
+        is_inter_state = invoice.party.state_code != company_state_code
+
+        tax = calculate_gst(
+            taxable_value=taxable_value,
+            tax_rate=tax_rate,
+            is_inter_state=is_inter_state
+        )
+
+        InvoiceGSTLine.objects.create(
+            invoice_line=line,
+            tax_rate=tax_rate,
+            taxable_value=taxable_value,
+            cgst=tax["cgst"],
+            sgst=tax["sgst"],
+            igst=tax["igst"]
+        )
+
+        taxable_total += taxable_value
+        cgst += tax["cgst"]
+        sgst += tax["sgst"]
+        igst += tax["igst"]
+
+    total_tax = cgst + sgst + igst
+
+    InvoiceGSTSummary.objects.create(
+        invoice=invoice,
+        taxable_value=taxable_total,
+        cgst=cgst,
+        sgst=sgst,
+        igst=igst,
+        total_tax=total_tax,
+        total_value=taxable_total + total_tax
+    )
+
+5️⃣ GST POSTING TO LEDGERS
+gst/services/posting.py
+from accounting.models import Ledger
+from voucher.models import VoucherLine
+from gst.models import GSTLedgerMapping
+
+def post_gst_to_ledgers(voucher, gst_summary):
+    mappings = {
+        m.tax_type: m.ledger
+        for m in GSTLedgerMapping.objects.filter(company=voucher.company)
+    }
+
+    if gst_summary.cgst > 0:
+        VoucherLine.objects.create(
+            voucher=voucher,
+            ledger=mappings["CGST"],
+            amount=gst_summary.cgst,
+            entry_type="CR"
+        )
+
+    if gst_summary.sgst > 0:
+        VoucherLine.objects.create(
+            voucher=voucher,
+            ledger=mappings["SGST"],
+            amount=gst_summary.sgst,
+            entry_type="CR"
+        )
+
+    if gst_summary.igst > 0:
+        VoucherLine.objects.create(
+            voucher=voucher,
+            ledger=mappings["IGST"],
+            amount=gst_summary.igst,
+            entry_type="CR"
+        )
+
+6️⃣ GST RETURNS MODELS
+gst/models.py (continued)
+class GSTR1(BaseModel):
+    company = models.ForeignKey("company.Company", on_delete=models.CASCADE)
+    period = models.CharField(max_length=7)  # YYYY-MM
+    outward_taxable = models.DecimalField(max_digits=16, decimal_places=2)
+    cgst = models.DecimalField(max_digits=16, decimal_places=2)
+    sgst = models.DecimalField(max_digits=16, decimal_places=2)
+    igst = models.DecimalField(max_digits=16, decimal_places=2)
+    is_filed = models.BooleanField(default=False)
+
+
+class GSTR3B(BaseModel):
+    company = models.ForeignKey("company.Company", on_delete=models.CASCADE)
+    period = models.CharField(max_length=7)
+    outward_taxable = models.DecimalField(max_digits=16, decimal_places=2)
+    inward_itc = models.DecimalField(max_digits=16, decimal_places=2)
+    cgst_payable = models.DecimalField(max_digits=16, decimal_places=2)
+    sgst_payable = models.DecimalField(max_digits=16, decimal_places=2)
+    igst_payable = models.DecimalField(max_digits=16, decimal_places=2)
+    is_filed = models.BooleanField(default=False)
+
+7️⃣ GST RETURN AGGREGATION LOGIC
+gst/services/returns.py
+from django.db.models import Sum
+from gst.models import InvoiceGSTSummary, GSTR1, GSTR3B
+
+def generate_gstr1(company, period):
+    qs = InvoiceGSTSummary.objects.filter(
+        invoice__company=company,
+        invoice__invoice_date__strftime="%Y-%m" == period
+    )
+
+    agg = qs.aggregate(
+        taxable=Sum("taxable_value"),
+        cgst=Sum("cgst"),
+        sgst=Sum("sgst"),
+        igst=Sum("igst"),
+    )
+
+    return GSTR1.objects.create(
+        company=company,
+        period=period,
+        outward_taxable=agg["taxable"] or 0,
+        cgst=agg["cgst"] or 0,
+        sgst=agg["sgst"] or 0,
+        igst=agg["igst"] or 0
+    )
+
+
+def generate_gstr3b(company, period):
+    gstr1 = GSTR1.objects.get(company=company, period=period)
+
+    return GSTR3B.objects.create(
+        company=company,
+        period=period,
+        outward_taxable=gstr1.outward_taxable,
+        inward_itc=0,  # later from purchase ITC
+        cgst_payable=gstr1.cgst,
+        sgst_payable=gstr1.sgst,
+        igst_payable=gstr1.igst
+    )
+
+8️⃣ GST CALCULATION TESTS
+gst/tests/test_gst_calculation.py
+from decimal import Decimal
+from django.test import TestCase
+from gst.services.calculator import calculate_gst
+from gst.models import GSTTaxRate
+
+class GSTCalculationTest(TestCase):
+    def setUp(self):
+        self.rate = GSTTaxRate(
+            rate=18,
+            cgst=9,
+            sgst=9,
+            igst=18
+        )
+
+    def test_intra_state_gst(self):
+        tax = calculate_gst(Decimal("1000"), self.rate, is_inter_state=False)
+        self.assertEqual(tax["cgst"], Decimal("90"))
+        self.assertEqual(tax["sgst"], Decimal("90"))
+        self.assertEqual(tax["igst"], Decimal("0"))
+
+    def test_inter_state_gst(self):
+        tax = calculate_gst(Decimal("1000"), self.rate, is_inter_state=True)
+        self.assertEqual(tax["igst"], Decimal("180"))
