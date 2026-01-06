@@ -58,23 +58,44 @@ def seed_groups():
 
 
 def seed_default_company():
-    """Create a default company if none exists."""
-    from apps.company.models import Company
+    """Create a default company with currency and address if none exists."""
+    from apps.company.models import Company, Address, Currency
     
     if not Company.objects.exists():
+        # Get or create currency first
+        currency, _ = Currency.objects.get_or_create(
+            code="INR",
+            defaults={
+                'name': "Indian Rupee",
+                'symbol': "₹",
+                'decimal_places': 2
+            }
+        )
+        
+        # Create company with correct fields
         company = Company.objects.create(
+            code="DEMO001",
             name="Demo Company Pvt Ltd",
-            company_code="DEMO001",
-            gstin="29ABCDE1234F1Z5",
-            pan="ABCDE1234F",
-            address="123 Business Street",
-            city="Mumbai",
-            state="Maharashtra",
-            pincode="400001",
-            phone="+91-22-12345678",
-            email="info@democompany.com",
+            legal_name="Demo Company Private Limited",
+            company_type="PRIVATE_LIMITED",
+            timezone="Asia/Kolkata",
+            language="en",
+            base_currency=currency,
             is_active=True
         )
+        
+        # Create registered office address
+        Address.objects.create(
+            company=company,
+            address_type="REGISTERED",
+            line1="123 Business Street",
+            line2="",
+            city="Mumbai",
+            state="Maharashtra",
+            country="India",
+            pincode="400001"
+        )
+        
         print(f"  ✅ Created default company: {company.name}")
         return company
     else:
