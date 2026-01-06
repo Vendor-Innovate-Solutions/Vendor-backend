@@ -189,13 +189,18 @@ REST_FRAMEWORK = {
 
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
+    "http://localhost:8000",
     "https://vendor-frontend-production-be99.up.railway.app",
+    "https://vendor-frontend-production.up.railway.app",
 ]
 
 CSRF_TRUSTED_ORIGINS = [
     "https://vendor-backend-production-2053.up.railway.app",
+    "https://vendor-backend-production-bd99.up.railway.app",
     "http://localhost:3000",
+    "http://localhost:8000",
     "https://vendor-frontend-production-be99.up.railway.app",
+    "https://vendor-frontend-production.up.railway.app",
 ]
 
 # Email Configuration
