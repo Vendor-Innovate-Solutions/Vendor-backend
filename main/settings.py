@@ -63,6 +63,9 @@ INSTALLED_APPS = [
     'apps.system',
     'apps.hr',
     'apps.portal',
+    
+    # Integrations
+    'integrations.gst',
 ]
 
 MIDDLEWARE = [
