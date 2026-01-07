@@ -233,6 +233,7 @@ def seed_product_categories():
         {'name': 'Hardware', 'description': 'Hardware tools and equipment', 'display_order': 4},
     ]
     
+    created_categories = {}
     created_count = 0
     for cat_data in categories:
         category, created = Category.objects.get_or_create(
@@ -244,9 +245,298 @@ def seed_product_categories():
                 'is_active': True
             }
         )
+        created_categories[cat_data['name']] = category
         if created:
             created_count += 1
             print(f"  ✅ Created category: {cat_data['name']}")
+    
+    return created_categories
+
+
+def seed_products():
+    """Create sample products."""
+    from apps.products.models import Product
+    from decimal import Decimal
+    
+    company = seed_default_company()
+    categories = seed_product_categories()
+    
+    products_data = [
+        {
+            'name': 'Laptop HP Pavilion',
+            'description': 'HP Pavilion 15.6" Laptop, Intel i5, 8GB RAM, 512GB SSD',
+            'category': 'Electronics',
+            'code': 'ELEC-001',
+            'hsn_code': '84713000',
+            'base_price': Decimal('45000.00'),
+            'is_active': True,
+        },
+        {
+            'name': 'Office Chair Executive',
+            'description': 'Ergonomic office chair with lumbar support',
+            'category': 'Furniture',
+            'code': 'FURN-001',
+            'hsn_code': '94013000',
+            'base_price': Decimal('8500.00'),
+            'is_active': True,
+        },
+        {
+            'name': 'A4 Paper Ream',
+            'description': 'White A4 copier paper, 500 sheets per ream',
+            'category': 'Stationery',
+            'code': 'STAT-001',
+            'hsn_code': '48025610',
+            'base_price': Decimal('250.00'),
+            'is_active': True,
+        },
+        {
+            'name': 'Wireless Mouse Logitech',
+            'description': 'Logitech wireless optical mouse',
+            'category': 'Electronics',
+            'code': 'ELEC-002',
+            'hsn_code': '84716060',
+            'base_price': Decimal('650.00'),
+            'is_active': True,
+        },
+        {
+            'name': 'Power Drill Set',
+            'description': '13mm chuck power drill with accessories',
+            'category': 'Hardware',
+            'code': 'HARD-001',
+            'hsn_code': '84672210',
+            'base_price': Decimal('3200.00'),
+            'is_active': True,
+        },
+    ]
+    
+    created_products = {}
+    created_count = 0
+    for prod_data in products_data:
+        category = categories.get(prod_data['category'])
+        if category:
+            product, created = Product.objects.get_or_create(
+                company=company,
+                code=prod_data['code'],
+                defaults={
+                    'name': prod_data['name'],
+                    'description': prod_data['description'],
+                    'category': category,
+                    'hsn_code': prod_data['hsn_code'],
+                    'base_price': prod_data['base_price'],
+                    'is_active': prod_data['is_active'],
+                }
+            )
+            created_products[prod_data['code']] = product
+            if created:
+                created_count += 1
+                print(f"  ✅ Created product: {prod_data['name']}")
+    
+    return created_products
+
+
+def seed_parties():
+    """Create sample parties (customers and suppliers)."""
+    from apps.party.models import Party
+    from apps.accounting.models import AccountGroup
+    
+    company = seed_default_company()
+    
+    # Get or create account groups for debtors/creditors
+    debtors_group = AccountGroup.objects.filter(
+        company=company, code='DEBTORS'
+    ).first()
+    creditors_group = AccountGroup.objects.filter(
+        company=company, code='CREDITORS'
+    ).first()
+    
+    parties_data = [
+        {
+            'name': 'ABC Retailers Pvt Ltd',
+            'party_type': 'CUSTOMER',
+            'code': 'CUST-001',
+            'gstin': '29ABCDE1234F1Z5',
+            'contact_person': 'Rajesh Kumar',
+            'phone': '+91-9876543210',
+            'email': 'rajesh@abcretailers.com',
+            'credit_limit': 100000,
+            'credit_days': 30,
+            'account_group': debtors_group,
+        },
+        {
+            'name': 'XYZ Traders',
+            'party_type': 'CUSTOMER',
+            'code': 'CUST-002',
+            'gstin': '27XYZAB5678C2D3',
+            'contact_person': 'Priya Sharma',
+            'phone': '+91-9988776655',
+            'email': 'priya@xyztraders.com',
+            'credit_limit': 50000,
+            'credit_days': 15,
+            'account_group': debtors_group,
+        },
+        {
+            'name': 'Global Suppliers Inc',
+            'party_type': 'SUPPLIER',
+            'code': 'SUPP-001',
+            'gstin': '29GSUPP1234E1F2',
+            'contact_person': 'Amit Patel',
+            'phone': '+91-8877665544',
+            'email': 'amit@globalsuppliers.com',
+            'credit_limit': 200000,
+            'credit_days': 45,
+            'account_group': creditors_group,
+        },
+    ]
+    
+    created_parties = {}
+    created_count = 0
+    for party_data in parties_data:
+        party, created = Party.objects.get_or_create(
+            company=company,
+            code=party_data['code'],
+            defaults={
+                'name': party_data['name'],
+                'party_type': party_data['party_type'],
+                'gstin': party_data['gstin'],
+                'contact_person': party_data['contact_person'],
+                'phone': party_data['phone'],
+                'email': party_data['email'],
+                'credit_limit': party_data['credit_limit'],
+                'credit_days': party_data['credit_days'],
+                'account_group': party_data['account_group'],
+                'is_active': True,
+            }
+        )
+        created_parties[party_data['code']] = party
+        if created:
+            created_count += 1
+            print(f"  ✅ Created party: {party_data['name']}")
+    
+    return created_parties
+
+
+def seed_stock_items():
+    """Create stock items with opening balances."""
+    from apps.inventory.models import StockItem, Warehouse
+    from decimal import Decimal
+    
+    company = seed_default_company()
+    products = seed_products()
+    
+    # Get or create default warehouse
+    warehouse, _ = Warehouse.objects.get_or_create(
+        company=company,
+        code='WH-MAIN',
+        defaults={
+            'name': 'Main Warehouse',
+            'address_line1': '123 Business Street',
+            'city': 'Mumbai',
+            'state': 'Maharashtra',
+            'pincode': '400001',
+            'is_active': True,
+        }
+    )
+    print(f"  ✅ Using warehouse: {warehouse.name}")
+    
+    stock_data = [
+        {'product_code': 'ELEC-001', 'quantity': Decimal('50'), 'rate': Decimal('45000.00')},
+        {'product_code': 'FURN-001', 'quantity': Decimal('25'), 'rate': Decimal('8500.00')},
+        {'product_code': 'STAT-001', 'quantity': Decimal('500'), 'rate': Decimal('250.00')},
+        {'product_code': 'ELEC-002', 'quantity': Decimal('100'), 'rate': Decimal('650.00')},
+        {'product_code': 'HARD-001', 'quantity': Decimal('30'), 'rate': Decimal('3200.00')},
+    ]
+    
+    created_count = 0
+    for stock in stock_data:
+        product = products.get(stock['product_code'])
+        if product:
+            stock_item, created = StockItem.objects.get_or_create(
+                company=company,
+                product=product,
+                warehouse=warehouse,
+                defaults={
+                    'quantity': stock['quantity'],
+                    'rate': stock['rate'],
+                }
+            )
+            if created:
+                created_count += 1
+                print(f"  ✅ Created stock for: {product.name} (Qty: {stock['quantity']})")
+            else:
+                # Update quantity if already exists
+                stock_item.quantity = stock['quantity']
+                stock_item.save()
+                print(f"  ✅ Updated stock for: {product.name} (Qty: {stock['quantity']})")
+    
+    return created_count
+
+
+def seed_orders():
+    """Create sample sales orders."""
+    from apps.orders.models import SalesOrder, SalesOrderLine
+    from decimal import Decimal
+    from datetime import date, timedelta
+    
+    company = seed_default_company()
+    products = seed_products()
+    parties = seed_parties()
+    fy = seed_financial_year()
+    
+    orders_data = [
+        {
+            'party_code': 'CUST-001',
+            'order_date': date.today() - timedelta(days=5),
+            'delivery_date': date.today() + timedelta(days=10),
+            'status': 'CONFIRMED',
+            'lines': [
+                {'product_code': 'ELEC-001', 'quantity': Decimal('5'), 'rate': Decimal('45000.00')},
+                {'product_code': 'ELEC-002', 'quantity': Decimal('10'), 'rate': Decimal('650.00')},
+            ]
+        },
+        {
+            'party_code': 'CUST-002',
+            'order_date': date.today() - timedelta(days=3),
+            'delivery_date': date.today() + timedelta(days=7),
+            'status': 'PENDING',
+            'lines': [
+                {'product_code': 'STAT-001', 'quantity': Decimal('50'), 'rate': Decimal('250.00')},
+                {'product_code': 'FURN-001', 'quantity': Decimal('3'), 'rate': Decimal('8500.00')},
+            ]
+        },
+    ]
+    
+    created_count = 0
+    for order_data in orders_data:
+        party = parties.get(order_data['party_code'])
+        if party and not SalesOrder.objects.filter(
+            company=company,
+            party=party,
+            order_date=order_data['order_date']
+        ).exists():
+            order = SalesOrder.objects.create(
+                company=company,
+                financial_year=fy,
+                party=party,
+                order_date=order_data['order_date'],
+                delivery_date=order_data['delivery_date'],
+                status=order_data['status'],
+                remarks=f"Sample order for {party.name}",
+            )
+            
+            # Create order lines
+            for line_data in order_data['lines']:
+                product = products.get(line_data['product_code'])
+                if product:
+                    SalesOrderLine.objects.create(
+                        order=order,
+                        product=product,
+                        quantity=line_data['quantity'],
+                        rate=line_data['rate'],
+                        amount=line_data['quantity'] * line_data['rate'],
+                    )
+            
+            created_count += 1
+            print(f"  ✅ Created order for: {party.name}")
     
     return created_count
 
@@ -268,6 +558,18 @@ def run_seed():
     
     print("\n📦 Seeding Product Categories...")
     seed_product_categories()
+    
+    print("\n🛍️ Seeding Products...")
+    seed_products()
+    
+    print("\n👥 Seeding Parties (Customers & Suppliers)...")
+    seed_parties()
+    
+    print("\n📦 Seeding Stock Items...")
+    seed_stock_items()
+    
+    print("\n🛒 Seeding Sales Orders...")
+    seed_orders()
     
     print("\n✅ Database seeding completed successfully!\n")
 
