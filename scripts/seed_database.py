@@ -266,46 +266,61 @@ def seed_products():
             'name': 'Laptop HP Pavilion',
             'description': 'HP Pavilion 15.6" Laptop, Intel i5, 8GB RAM, 512GB SSD',
             'category': 'Electronics',
-            'code': 'ELEC-001',
+            'brand': 'HP',
             'hsn_code': '84713000',
-            'base_price': Decimal('45000.00'),
-            'is_active': True,
+            'price': Decimal('45000.00'),
+            'unit': 'NOS',
+            'cgst_rate': Decimal('9.00'),
+            'sgst_rate': Decimal('9.00'),
+            'igst_rate': Decimal('18.00'),
         },
         {
             'name': 'Office Chair Executive',
             'description': 'Ergonomic office chair with lumbar support',
             'category': 'Furniture',
-            'code': 'FURN-001',
+            'brand': 'Featherlite',
             'hsn_code': '94013000',
-            'base_price': Decimal('8500.00'),
-            'is_active': True,
+            'price': Decimal('8500.00'),
+            'unit': 'NOS',
+            'cgst_rate': Decimal('9.00'),
+            'sgst_rate': Decimal('9.00'),
+            'igst_rate': Decimal('18.00'),
         },
         {
             'name': 'A4 Paper Ream',
             'description': 'White A4 copier paper, 500 sheets per ream',
             'category': 'Stationery',
-            'code': 'STAT-001',
+            'brand': 'JK Copier',
             'hsn_code': '48025610',
-            'base_price': Decimal('250.00'),
-            'is_active': True,
+            'price': Decimal('250.00'),
+            'unit': 'PAC',
+            'cgst_rate': Decimal('6.00'),
+            'sgst_rate': Decimal('6.00'),
+            'igst_rate': Decimal('12.00'),
         },
         {
             'name': 'Wireless Mouse Logitech',
             'description': 'Logitech wireless optical mouse',
             'category': 'Electronics',
-            'code': 'ELEC-002',
+            'brand': 'Logitech',
             'hsn_code': '84716060',
-            'base_price': Decimal('650.00'),
-            'is_active': True,
+            'price': Decimal('650.00'),
+            'unit': 'NOS',
+            'cgst_rate': Decimal('9.00'),
+            'sgst_rate': Decimal('9.00'),
+            'igst_rate': Decimal('18.00'),
         },
         {
             'name': 'Power Drill Set',
             'description': '13mm chuck power drill with accessories',
             'category': 'Hardware',
-            'code': 'HARD-001',
+            'brand': 'Bosch',
             'hsn_code': '84672210',
-            'base_price': Decimal('3200.00'),
-            'is_active': True,
+            'price': Decimal('3200.00'),
+            'unit': 'SET',
+            'cgst_rate': Decimal('9.00'),
+            'sgst_rate': Decimal('9.00'),
+            'igst_rate': Decimal('18.00'),
         },
     ]
     
@@ -316,17 +331,22 @@ def seed_products():
         if category:
             product, created = Product.objects.get_or_create(
                 company=company,
-                code=prod_data['code'],
+                name=prod_data['name'],
                 defaults={
-                    'name': prod_data['name'],
                     'description': prod_data['description'],
                     'category': category,
+                    'brand': prod_data['brand'],
                     'hsn_code': prod_data['hsn_code'],
-                    'base_price': prod_data['base_price'],
-                    'is_active': prod_data['is_active'],
+                    'price': prod_data['price'],
+                    'unit': prod_data['unit'],
+                    'cgst_rate': prod_data['cgst_rate'],
+                    'sgst_rate': prod_data['sgst_rate'],
+                    'igst_rate': prod_data['igst_rate'],
+                    'status': 'ACTIVE',
+                    'is_portal_visible': True,
                 }
             )
-            created_products[prod_data['code']] = product
+            created_products[prod_data['name']] = product
             if created:
                 created_count += 1
                 print(f"  ✅ Created product: {prod_data['name']}")
@@ -439,16 +459,16 @@ def seed_stock_items():
     print(f"  ✅ Using warehouse: {warehouse.name}")
     
     stock_data = [
-        {'product_code': 'ELEC-001', 'quantity': Decimal('50'), 'rate': Decimal('45000.00')},
-        {'product_code': 'FURN-001', 'quantity': Decimal('25'), 'rate': Decimal('8500.00')},
-        {'product_code': 'STAT-001', 'quantity': Decimal('500'), 'rate': Decimal('250.00')},
-        {'product_code': 'ELEC-002', 'quantity': Decimal('100'), 'rate': Decimal('650.00')},
-        {'product_code': 'HARD-001', 'quantity': Decimal('30'), 'rate': Decimal('3200.00')},
+        {'product_name': 'Laptop HP Pavilion', 'quantity': Decimal('50'), 'rate': Decimal('45000.00')},
+        {'product_name': 'Office Chair Executive', 'quantity': Decimal('25'), 'rate': Decimal('8500.00')},
+        {'product_name': 'A4 Paper Ream', 'quantity': Decimal('500'), 'rate': Decimal('250.00')},
+        {'product_name': 'Wireless Mouse Logitech', 'quantity': Decimal('100'), 'rate': Decimal('650.00')},
+        {'product_name': 'Power Drill Set', 'quantity': Decimal('30'), 'rate': Decimal('3200.00')},
     ]
     
     created_count = 0
     for stock in stock_data:
-        product = products.get(stock['product_code'])
+        product = products.get(stock['product_name'])
         if product:
             stock_item, created = StockItem.objects.get_or_create(
                 company=company,
@@ -489,8 +509,8 @@ def seed_orders():
             'delivery_date': date.today() + timedelta(days=10),
             'status': 'CONFIRMED',
             'lines': [
-                {'product_code': 'ELEC-001', 'quantity': Decimal('5'), 'rate': Decimal('45000.00')},
-                {'product_code': 'ELEC-002', 'quantity': Decimal('10'), 'rate': Decimal('650.00')},
+                {'product_name': 'Laptop HP Pavilion', 'quantity': Decimal('5'), 'rate': Decimal('45000.00')},
+                {'product_name': 'Wireless Mouse Logitech', 'quantity': Decimal('10'), 'rate': Decimal('650.00')},
             ]
         },
         {
@@ -499,8 +519,8 @@ def seed_orders():
             'delivery_date': date.today() + timedelta(days=7),
             'status': 'PENDING',
             'lines': [
-                {'product_code': 'STAT-001', 'quantity': Decimal('50'), 'rate': Decimal('250.00')},
-                {'product_code': 'FURN-001', 'quantity': Decimal('3'), 'rate': Decimal('8500.00')},
+                {'product_name': 'A4 Paper Ream', 'quantity': Decimal('50'), 'rate': Decimal('250.00')},
+                {'product_name': 'Office Chair Executive', 'quantity': Decimal('3'), 'rate': Decimal('8500.00')},
             ]
         },
     ]
@@ -525,7 +545,7 @@ def seed_orders():
             
             # Create order lines
             for line_data in order_data['lines']:
-                product = products.get(line_data['product_code'])
+                product = products.get(line_data['product_name'])
                 if product:
                     SalesOrderLine.objects.create(
                         order=order,
