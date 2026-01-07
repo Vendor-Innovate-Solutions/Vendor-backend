@@ -412,11 +412,22 @@ def seed_parties():
         ).first()
         
         if not existing_party:
+            # Determine account type based on party type
+            account_type = 'CUSTOMER' if party_data['party_type'] == 'CUSTOMER' else 'SUPPLIER'
+            
+            # Generate ledger code
+            ledger_code = f"{account_type[:3]}-{party_data['name'][:10].upper().replace(' ', '')}"
+            
             # Create ledger for the party
             ledger = Ledger.objects.create(
                 company=company,
+                code=ledger_code,
                 name=party_data['name'],
-                account_group=party_data['account_group'],
+                group=party_data['account_group'],
+                account_type=account_type,
+                opening_balance=0,
+                opening_balance_type='DR' if account_type == 'CUSTOMER' else 'CR',
+                opening_balance_fy=company.active_financial_year,
             )
             
             # Create party
