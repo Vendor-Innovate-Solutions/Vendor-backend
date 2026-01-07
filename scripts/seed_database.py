@@ -137,9 +137,15 @@ def seed_financial_year():
         defaults={
             'start_date': date(2025, 4, 1),
             'end_date': date(2026, 3, 31),
+            'is_current': True,
             'is_closed': False
         }
     )
+    
+    # Ensure the FY is marked as current
+    if not fy.is_current:
+        fy.is_current = True
+        fy.save()
     
     if created:
         print(f"  ✅ Created financial year: {fy.name}")
@@ -466,26 +472,32 @@ def seed_parties():
 
 def seed_stock_items():
     """Create stock items with opening balances."""
-    from apps.inventory.models import StockItem, Warehouse
+    from apps.inventory.models import StockItem, Godown, StockBalance, UnitOfMeasure
     from decimal import Decimal
     
     company = seed_default_company()
     products = seed_products()
     
-    # Get or create default warehouse
-    warehouse, _ = Warehouse.objects.get_or_create(
+    # Get or create default godown (warehouse)
+    godown, _ = Godown.objects.get_or_create(
         company=company,
         code='WH-MAIN',
         defaults={
             'name': 'Main Warehouse',
-            'address_line1': '123 Business Street',
-            'city': 'Mumbai',
-            'state': 'Maharashtra',
-            'pincode': '400001',
             'is_active': True,
         }
     )
-    print(f"  ✅ Using warehouse: {warehouse.name}")
+    print(f"  ✅ Using godown: {godown.name}")
+    
+    # Get or create default UoM
+    uom, _ = UnitOfMeasure.objects.get_or_create(
+        name='Piece',
+        defaults={
+            'symbol': 'PCS',
+            'category': 'QUANTITY',
+            'is_base_unit': True,
+        }
+    )
     
     stock_data = [
         {'product_name': 'Laptop HP Pavilion', 'quantity': Decimal('50'), 'rate': Decimal('45000.00')},
@@ -499,22 +511,39 @@ def seed_stock_items():
     for stock in stock_data:
         product = products.get(stock['product_name'])
         if product:
-            stock_item, created = StockItem.objects.get_or_create(
+            # Create or get stock item
+            sku = f"SKU-{product.name[:10].upper().replace(' ', '-')}"
+            stock_item, item_created = StockItem.objects.get_or_create(
                 company=company,
-                product=product,
-                warehouse=warehouse,
+                sku=sku,
                 defaults={
-                    'quantity': stock['quantity'],
-                    'rate': stock['rate'],
+                    'product': product,
+                    'name': product.name,
+                    'description': product.description or '',
+                    'uom': uom,
+                    'is_stock_item': True,
+                    'is_active': True,
                 }
             )
-            if created:
+            
+            # Create or update stock balance
+            balance, bal_created = StockBalance.objects.get_or_create(
+                company=company,
+                item=stock_item,
+                godown=godown,
+                defaults={
+                    'quantity_on_hand': stock['quantity'],
+                }
+            )
+            
+            if not bal_created:
+                balance.quantity_on_hand = stock['quantity']
+                balance.save()
+            
+            if item_created:
                 created_count += 1
                 print(f"  ✅ Created stock for: {product.name} (Qty: {stock['quantity']})")
             else:
-                # Update quantity if already exists
-                stock_item.quantity = stock['quantity']
-                stock_item.save()
                 print(f"  ✅ Updated stock for: {product.name} (Qty: {stock['quantity']})")
     
     return created_count
