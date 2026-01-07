@@ -15,8 +15,15 @@ from apps.orders.api.views_purchase import (
     PurchaseOrderRemoveItemView, PurchaseOrderConfirmView,
     PurchaseOrderCancelView
 )
+from apps.orders.api.views_allocation import (
+    GetAvailableEmployeesView, AllocateOrderView
+)
 
 urlpatterns = [
+    # Order allocation endpoints
+    path('get_available_employees_for_order/', GetAvailableEmployeesView.as_view(), name='get-available-employees'),
+    path('allocate-order/', AllocateOrderView.as_view(), name='allocate-order'),
+    
     # Sales Order endpoints
     path('sales/', SalesOrderListCreateView.as_view(), name='sales-order-list-create'),
     path('sales/<uuid:order_id>/', SalesOrderDetailView.as_view(), name='sales-order-detail'),
