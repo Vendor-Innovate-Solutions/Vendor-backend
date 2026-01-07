@@ -357,7 +357,7 @@ def seed_products():
 def seed_parties():
     """Create sample parties (customers and suppliers)."""
     from apps.party.models import Party
-    from apps.accounting.models import AccountGroup
+    from apps.accounting.models import AccountGroup, Ledger
     
     company = seed_default_company()
     
@@ -373,9 +373,7 @@ def seed_parties():
         {
             'name': 'ABC Retailers Pvt Ltd',
             'party_type': 'CUSTOMER',
-            'code': 'CUST-001',
             'gstin': '29ABCDE1234F1Z5',
-            'contact_person': 'Rajesh Kumar',
             'phone': '+91-9876543210',
             'email': 'rajesh@abcretailers.com',
             'credit_limit': 100000,
@@ -385,9 +383,7 @@ def seed_parties():
         {
             'name': 'XYZ Traders',
             'party_type': 'CUSTOMER',
-            'code': 'CUST-002',
             'gstin': '27XYZAB5678C2D3',
-            'contact_person': 'Priya Sharma',
             'phone': '+91-9988776655',
             'email': 'priya@xyztraders.com',
             'credit_limit': 50000,
@@ -397,9 +393,7 @@ def seed_parties():
         {
             'name': 'Global Suppliers Inc',
             'party_type': 'SUPPLIER',
-            'code': 'SUPP-001',
             'gstin': '29GSUPP1234E1F2',
-            'contact_person': 'Amit Patel',
             'phone': '+91-8877665544',
             'email': 'amit@globalsuppliers.com',
             'credit_limit': 200000,
@@ -411,26 +405,39 @@ def seed_parties():
     created_parties = {}
     created_count = 0
     for party_data in parties_data:
-        party, created = Party.objects.get_or_create(
+        # Check if party already exists
+        existing_party = Party.objects.filter(
             company=company,
-            code=party_data['code'],
-            defaults={
-                'name': party_data['name'],
-                'party_type': party_data['party_type'],
-                'gstin': party_data['gstin'],
-                'contact_person': party_data['contact_person'],
-                'phone': party_data['phone'],
-                'email': party_data['email'],
-                'credit_limit': party_data['credit_limit'],
-                'credit_days': party_data['credit_days'],
-                'account_group': party_data['account_group'],
-                'is_active': True,
-            }
-        )
-        created_parties[party_data['code']] = party
-        if created:
+            name=party_data['name']
+        ).first()
+        
+        if not existing_party:
+            # Create ledger for the party
+            ledger = Ledger.objects.create(
+                company=company,
+                name=party_data['name'],
+                account_group=party_data['account_group'],
+            )
+            
+            # Create party
+            party = Party.objects.create(
+                company=company,
+                name=party_data['name'],
+                party_type=party_data['party_type'],
+                ledger=ledger,
+                gstin=party_data['gstin'],
+                phone=party_data['phone'],
+                email=party_data['email'],
+                credit_limit=party_data['credit_limit'],
+                credit_days=party_data['credit_days'],
+                is_active=True,
+            )
+            created_parties[party_data['name']] = party
             created_count += 1
             print(f"  ✅ Created party: {party_data['name']}")
+        else:
+            created_parties[party_data['name']] = existing_party
+            print(f"  ℹ️  Party already exists: {party_data['name']}")
     
     return created_parties
 
@@ -504,7 +511,7 @@ def seed_orders():
     
     orders_data = [
         {
-            'party_code': 'CUST-001',
+            'party_name': 'ABC Retailers Pvt Ltd',
             'order_date': date.today() - timedelta(days=5),
             'delivery_date': date.today() + timedelta(days=10),
             'status': 'CONFIRMED',
@@ -514,7 +521,7 @@ def seed_orders():
             ]
         },
         {
-            'party_code': 'CUST-002',
+            'party_name': 'XYZ Traders',
             'order_date': date.today() - timedelta(days=3),
             'delivery_date': date.today() + timedelta(days=7),
             'status': 'PENDING',
@@ -527,7 +534,7 @@ def seed_orders():
     
     created_count = 0
     for order_data in orders_data:
-        party = parties.get(order_data['party_code'])
+        party = parties.get(order_data['party_name'])
         if party and not SalesOrder.objects.filter(
             company=company,
             party=party,
