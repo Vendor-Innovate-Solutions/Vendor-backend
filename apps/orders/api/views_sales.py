@@ -36,7 +36,7 @@ class SalesOrderListCreateView(APIView):
         qs = SalesOrder.objects.filter(company=company).select_related(
             'customer', 'currency'
         ).annotate(
-            item_count=Count('orderitem')
+            item_count=Count('items')
         )
         
         # Filter by status
