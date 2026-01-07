@@ -358,8 +358,19 @@ def seed_parties():
     """Create sample parties (customers and suppliers)."""
     from apps.party.models import Party
     from apps.accounting.models import AccountGroup, Ledger
+    from apps.company.models import FinancialYear
     
     company = seed_default_company()
+    
+    # Get current financial year
+    current_fy = FinancialYear.objects.filter(
+        company=company,
+        is_current=True
+    ).first()
+    
+    if not current_fy:
+        print("  ⚠️  No current financial year found, skipping party seeding")
+        return {}
     
     # Get or create account groups for debtors/creditors
     debtors_group = AccountGroup.objects.filter(
@@ -427,7 +438,7 @@ def seed_parties():
                 account_type=account_type,
                 opening_balance=0,
                 opening_balance_type='DR' if account_type == 'CUSTOMER' else 'CR',
-                opening_balance_fy=company.active_financial_year,
+                opening_balance_fy=current_fy,
             )
             
             # Create party
