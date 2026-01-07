@@ -35,7 +35,7 @@ class PurchaseOrderListCreateView(APIView):
         qs = PurchaseOrder.objects.filter(company=company).select_related(
             'supplier', 'currency'
         ).annotate(
-            item_count=Count('orderitem')
+            item_count=Count('items')
         )
         
         # Filter by status
