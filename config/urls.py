@@ -25,4 +25,7 @@ urlpatterns = [
     
     # App API endpoints
     path('api/', include('api.urls')),
+    
+    # Public portal endpoints (direct access without /api/ prefix)
+    path('portal/', include('apps.portal.api.urls')),
 ]
