@@ -550,14 +550,27 @@ def seed_stock_items():
 
 def seed_orders():
     """Create sample sales orders."""
-    from apps.orders.models import SalesOrder, SalesOrderLine
+    from apps.orders.models import SalesOrder, OrderItem
+    from apps.inventory.models import StockItem, UnitOfMeasure
+    from apps.company.models import Currency
     from decimal import Decimal
     from datetime import date, timedelta
     
     company = seed_default_company()
     products = seed_products()
     parties = seed_parties()
-    fy = seed_financial_year()
+    
+    # Get currency
+    currency = Currency.objects.filter(company__isnull=True, code='INR').first()
+    if not currency:
+        print("  ⚠️  No INR currency found, skipping orders")
+        return 0
+    
+    # Get UoM
+    uom = UnitOfMeasure.objects.filter(symbol='PCS').first()
+    if not uom:
+        print("  ⚠️  No UoM found, skipping orders")
+        return 0
     
     orders_data = [
         {
@@ -565,9 +578,10 @@ def seed_orders():
             'order_date': date.today() - timedelta(days=5),
             'delivery_date': date.today() + timedelta(days=10),
             'status': 'CONFIRMED',
+            'order_number': 'SO-2025-001',
             'lines': [
-                {'product_name': 'Laptop HP Pavilion', 'quantity': Decimal('5'), 'rate': Decimal('45000.00')},
-                {'product_name': 'Wireless Mouse Logitech', 'quantity': Decimal('10'), 'rate': Decimal('650.00')},
+                {'product_name': 'Laptop HP Pavilion', 'quantity': Decimal('5.000'), 'rate': Decimal('45000.00')},
+                {'product_name': 'Wireless Mouse Logitech', 'quantity': Decimal('10.000'), 'rate': Decimal('650.00')},
             ]
         },
         {
@@ -575,9 +589,10 @@ def seed_orders():
             'order_date': date.today() - timedelta(days=3),
             'delivery_date': date.today() + timedelta(days=7),
             'status': 'PENDING',
+            'order_number': 'SO-2025-002',
             'lines': [
-                {'product_name': 'A4 Paper Ream', 'quantity': Decimal('50'), 'rate': Decimal('250.00')},
-                {'product_name': 'Office Chair Executive', 'quantity': Decimal('3'), 'rate': Decimal('8500.00')},
+                {'product_name': 'A4 Paper Ream', 'quantity': Decimal('50.000'), 'rate': Decimal('250.00')},
+                {'product_name': 'Office Chair Executive', 'quantity': Decimal('3.000'), 'rate': Decimal('8500.00')},
             ]
         },
     ]
@@ -587,30 +602,45 @@ def seed_orders():
         party = parties.get(order_data['party_name'])
         if party and not SalesOrder.objects.filter(
             company=company,
-            party=party,
-            order_date=order_data['order_date']
+            order_number=order_data['order_number']
         ).exists():
             order = SalesOrder.objects.create(
                 company=company,
-                financial_year=fy,
-                party=party,
+                order_number=order_data['order_number'],
+                customer=party,
+                currency=currency,
                 order_date=order_data['order_date'],
                 delivery_date=order_data['delivery_date'],
                 status=order_data['status'],
-                remarks=f"Sample order for {party.name}",
+                notes=f"Sample order for {party.name}",
             )
             
-            # Create order lines
+            # Create order items
+            line_no = 1
             for line_data in order_data['lines']:
                 product = products.get(line_data['product_name'])
                 if product:
-                    SalesOrderLine.objects.create(
-                        order=order,
-                        product=product,
-                        quantity=line_data['quantity'],
-                        rate=line_data['rate'],
-                        amount=line_data['quantity'] * line_data['rate'],
-                    )
+                    # Find corresponding stock item
+                    sku = f"SKU-{product.name[:10].upper().replace(' ', '-')}"
+                    stock_item = StockItem.objects.filter(
+                        company=company,
+                        sku=sku
+                    ).first()
+                    
+                    if stock_item:
+                        OrderItem.objects.create(
+                            company=company,
+                            sales_order=order,
+                            line_no=line_no,
+                            item=stock_item,
+                            description=product.description or '',
+                            quantity=line_data['quantity'],
+                            uom=uom,
+                            unit_rate=line_data['rate'],
+                            discount_pct=Decimal('0.00'),
+                            tax_rate=product.igst_rate,
+                        )
+                        line_no += 1
             
             created_count += 1
             print(f"  ✅ Created order for: {party.name}")
