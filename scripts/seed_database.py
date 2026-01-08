@@ -197,6 +197,7 @@ def seed_account_groups():
                     'name': group_data['name'],
                     'nature': group_data['nature'],
                     'report_type': group_data['report_type'],
+                    'path': f"/{group_data['code']}/",
                 }
             )
             created_groups[group_data['code']] = group
@@ -217,6 +218,7 @@ def seed_account_groups():
                         'nature': group_data['nature'],
                         'report_type': group_data['report_type'],
                         'parent': parent,
+                        'path': f"{parent.path}{group_data['code']}/",
                     }
                 )
                 if created:
@@ -348,7 +350,7 @@ def seed_products():
                     'cgst_rate': prod_data['cgst_rate'],
                     'sgst_rate': prod_data['sgst_rate'],
                     'igst_rate': prod_data['igst_rate'],
-                    'status': 'ACTIVE',
+                    'status': 'available',
                     'is_portal_visible': True,
                 }
             )
@@ -560,8 +562,8 @@ def seed_orders():
     products = seed_products()
     parties = seed_parties()
     
-    # Get currency
-    currency = Currency.objects.filter(company__isnull=True, code='INR').first()
+    # Get currency (Currency is global, not company-scoped)
+    currency = Currency.objects.filter(code='INR').first()
     if not currency:
         print("  ⚠️  No INR currency found, skipping orders")
         return 0
