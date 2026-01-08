@@ -491,11 +491,10 @@ def seed_stock_items():
     
     # Get or create default UoM
     uom, _ = UnitOfMeasure.objects.get_or_create(
-        name='Piece',
+        symbol='PCS',
         defaults={
-            'symbol': 'PCS',
+            'name': 'Piece',
             'category': 'QUANTITY',
-            'is_base_unit': True,
         }
     )
     
