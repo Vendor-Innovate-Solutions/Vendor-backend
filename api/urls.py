@@ -4,6 +4,9 @@ API URL configuration - Central routing for all API endpoints.
 from django.urls import path, include
 
 urlpatterns = [
+    # User APIs (Registration, OTP)
+    path('users/', include('apps.users.urls')),
+    
     # Company APIs (Financial Year, etc.)
     path('company/', include('apps.company.api.urls')),
     

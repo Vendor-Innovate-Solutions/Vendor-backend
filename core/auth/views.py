@@ -18,7 +18,7 @@ class LoginView(TokenObtainPairView):
     
     POST /auth/login/
     {
-        "username": "user@example.com",
+        "email": "user@example.com",
         "password": "password123"
     }
     

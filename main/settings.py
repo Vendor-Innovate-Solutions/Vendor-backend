@@ -63,6 +63,13 @@ INSTALLED_APPS = [
     'apps.system',
     'apps.hr',
     'apps.portal',
+    'apps.workflow',
+    
+    # Integrations
+    'integrations.gst',
+    'integrations.notifications',
+    'integrations.payments',
+    'integrations.shipping',
 ]
 
 MIDDLEWARE = [
@@ -74,6 +81,7 @@ MIDDLEWARE = [
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'core.middleware.company_scope.CompanyScopeMiddleware',
+    'core.middleware.routing.PostLoginRoutingMiddleware',  # Post-login routing enforcement
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
@@ -102,7 +110,7 @@ WSGI_APPLICATION = 'main.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.1/ref/settings/#databases
 
-# Local PostgreSQL Configuration
+# Use PostgreSQL for local development
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
@@ -179,6 +187,26 @@ REST_FRAMEWORK = {
     )
 }
 
+from datetime import timedelta
+
+SIMPLE_JWT = {
+    'ACCESS_TOKEN_LIFETIME': timedelta(days=1),      # Access token valid for 1 day
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=30),    # Refresh token valid for 30 days
+    'ROTATE_REFRESH_TOKENS': True,                   # Issue new refresh token on refresh
+    'BLACKLIST_AFTER_ROTATION': True,                # Blacklist old refresh tokens
+    'UPDATE_LAST_LOGIN': True,                       # Update user's last_login on token obtain
+    
+    'ALGORITHM': 'HS256',
+    'SIGNING_KEY': SECRET_KEY,
+    
+    'AUTH_HEADER_TYPES': ('Bearer',),
+    'AUTH_HEADER_NAME': 'HTTP_AUTHORIZATION',
+    'USER_ID_FIELD': 'id',
+    'USER_ID_CLAIM': 'user_id',
+    
+    'TOKEN_OBTAIN_SERIALIZER': 'core.auth.serializers.ERPTokenObtainPairSerializer',
+}
+
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "https://vendor-frontend-production-be99.up.railway.app",
@@ -198,6 +226,11 @@ EMAIL_USE_TLS = True
 EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', 'venkatesh.k21062005@gmail.com')
 EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', 'ywqc fghh kgdv kaqe')
 DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
+
+# Twilio Configuration
+TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID', 'AC05269c801ece94e35194821bccf5f230')
+TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN', '9ee48c27cad6c0f26acfd63c7fb93f22')
+TWILIO_PHONE_NUMBER = os.environ.get('TWILIO_PHONE_NUMBER', '+17756408456')
 
 # Logging Configuration
 LOGGING = {

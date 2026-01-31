@@ -52,22 +52,17 @@ class StockItemViewSet(CompanyScopedViewSet):
         if is_active is not None:
             qs = qs.filter(is_active=is_active.lower() == 'true')
         
-        # Filter by group
-        group_id = self.request.query_params.get('group')
-        if group_id:
-            qs = qs.filter(group_id=group_id)
-        
-        # Filter by category
-        category_id = self.request.query_params.get('category')
-        if category_id:
-            qs = qs.filter(category_id=category_id)
+        # Filter by product
+        product_id = self.request.query_params.get('product')
+        if product_id:
+            qs = qs.filter(product_id=product_id)
         
         # Search by name or SKU
         search = self.request.query_params.get('search')
         if search:
             qs = qs.filter(name__icontains=search) | qs.filter(sku__icontains=search)
         
-        return qs.select_related('group', 'category', 'base_uom')
+        return qs.select_related('company', 'product', 'uom')
     
     @action(detail=True, methods=['get'])
     def stock_summary(self, request, pk=None):

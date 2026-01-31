@@ -19,7 +19,7 @@ def list_items(company, is_active=True):
     qs = StockItem.objects.filter(company=company)
     if is_active is not None:
         qs = qs.filter(is_active=is_active)
-    return qs.select_related('group', 'category', 'base_uom')
+    return qs.select_related('company', 'product', 'uom')
 
 
 def get_item(company, item_id):
@@ -36,7 +36,7 @@ def get_item(company, item_id):
     Raises:
         StockItem.DoesNotExist: If item not found or doesn't belong to company
     """
-    return StockItem.objects.select_related('group', 'category', 'base_uom').get(
+    return StockItem.objects.select_related('company', 'product', 'uom').get(
         company=company,
         id=item_id
     )

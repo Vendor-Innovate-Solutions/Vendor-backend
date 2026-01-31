@@ -5,6 +5,7 @@ Handles retailer registration, catalog, orders, and company discovery.
 from django.urls import path
 from apps.portal.api.views_retailer import (
     RetailerRegisterView,
+    RetailerCompleteProfileView,
     RetailerApproveView,
     RetailerRejectView,
     RetailerListView,
@@ -22,8 +23,9 @@ from apps.portal.api.views_orders import (
 )
 
 urlpatterns = [
-    # Retailer onboarding (public)
+    # Retailer onboarding (authenticated - user already registered via /users/register/)
     path('register/', RetailerRegisterView.as_view(), name='retailer-register'),
+    path('complete-profile/', RetailerCompleteProfileView.as_view(), name='retailer-complete-profile'),
     path('companies/discover/', CompanyDiscoveryView.as_view(), name='company-discovery'),
     
     # Retailer management (admin)

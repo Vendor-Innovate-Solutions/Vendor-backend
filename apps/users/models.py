@@ -79,3 +79,46 @@ class PasswordResetOTP(models.Model):
     
     class Meta:
         ordering = ['-created_at']
+
+
+class PhoneOTP(models.Model):
+    """
+    OTP-based phone number verification mechanism.
+    Used for mobile app registration and phone number verification.
+    User is nullable to support pre-registration phone verification.
+    """
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="phone_otps",
+        null=True,
+        blank=True
+    )
+    phone_number = models.CharField(max_length=20)
+    otp = models.CharField(max_length=6)
+    is_verified = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    attempts = models.IntegerField(default=0)
+    
+    def save(self, *args, **kwargs):
+        if not self.otp:
+            self.otp = self.generate_otp()
+        if not self.expires_at:
+            self.expires_at = timezone.now() + timedelta(minutes=10)  # OTP expires in 10 minutes
+        super().save(*args, **kwargs)
+    
+    @staticmethod
+    def generate_otp():
+        """Generate a 6-digit OTP"""
+        return ''.join(random.choices(string.digits, k=6))
+    
+    def is_expired(self):
+        """Check if OTP has expired"""
+        return timezone.now() > self.expires_at
+    
+    def __str__(self):
+        return f"PhoneOTP for {self.phone_number} - {self.otp}"
+    
+    class Meta:
+        ordering = ['-created_at']

@@ -2,21 +2,77 @@
 Custom JWT serializers with ERP-specific claims.
 """
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from rest_framework import serializers
+from django.contrib.auth import get_user_model
+
+User = get_user_model()
 
 
 class ERPTokenObtainPairSerializer(TokenObtainPairSerializer):
     """
-    Custom JWT serializer that includes:
-    - username
-    - active_company (current company context)
-    - roles (all CompanyUser roles for this user)
-    - is_internal_user / is_portal_user flags
+    Custom JWT serializer that:
+    - Uses email instead of username for login
+    - Includes ERP-specific claims:
+      - username, email
+      - active_company (current company context)
+      - roles (all CompanyUser roles for this user)
+      - is_internal_user / is_portal_user flags
     
     Frontend can use these claims to:
     - Display active company
     - Show/hide features based on roles
     - Route to correct dashboard (internal vs retailer)
     """
+    # Override username_field to use email
+    username_field = 'email'
+    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Remove username field and add email field
+        self.fields.pop('username', None)
+        self.fields['email'] = serializers.EmailField(required=True)
+    
+    def validate(self, attrs):
+        """
+        Validate using email instead of username.
+        """
+        email = attrs.get('email')
+        password = attrs.get('password')
+        
+        if email and password:
+            # Find user by email
+            try:
+                user = User.objects.get(email=email)
+            except User.DoesNotExist:
+                raise serializers.ValidationError({
+                    'email': 'No user found with this email address.'
+                })
+            
+            # Check password
+            if not user.check_password(password):
+                raise serializers.ValidationError({
+                    'detail': 'Invalid credentials.'
+                })
+            
+            # Check if user is active
+            if not user.is_active:
+                raise serializers.ValidationError({
+                    'detail': 'User account is disabled.'
+                })
+            
+            # Generate tokens manually since we're bypassing parent validation
+            refresh = self.get_token(user)
+            
+            data = {
+                'refresh': str(refresh),
+                'access': str(refresh.access_token),
+            }
+            
+            return data
+        
+        raise serializers.ValidationError({
+            'detail': 'Email and password are required.'
+        })
     
     @classmethod
     def get_token(cls, user):

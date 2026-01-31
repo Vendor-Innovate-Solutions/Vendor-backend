@@ -5,107 +5,110 @@ Handles retailer onboarding, approval workflow, and company discovery.
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.utils import timezone
 from django.db.models import Q
 
 from core.permissions.base import RolePermission
-from apps.party.models import RetailerUser, Party
+from apps.party.models import RetailerUser, Party, PartyAddress
 from apps.company.models import Company
 
 User = get_user_model()
 
 
 # ================================================================
-# RETAILER REGISTRATION
+# RETAILER REGISTRATION (For already authenticated users)
 # ================================================================
 class RetailerRegisterView(APIView):
     """
-    Public endpoint for retailer self-registration.
+    Endpoint for authenticated users to complete retailer profile.
     
-    POST: Create user account and request company access
-    No authentication required
+    POST: Create retailer profile and optionally request company access
+    Requires: Authenticated user (already registered via /users/register/)
     """
-    authentication_classes = []  # Public endpoint
-    permission_classes = []
+    permission_classes = [IsAuthenticated]
     
     def post(self, request):
         """
-        Register new retailer and request access to company.
+        Complete retailer profile for authenticated user.
         
         Body:
-            email: Retailer email (becomes username)
-            password: Account password
-            company_id: Company UUID to request access
-            full_name: Optional full name
-            phone: Optional phone number
+            company_id: Optional company UUID to request access (can be done later)
+            business_name: Optional business/shop name
+            address: Optional address details
+                - address_line1
+                - city
+                - state
+                - postal_code
+                - country (default: IN)
         """
         data = request.data
-        
-        # Validate required fields
-        if not all(key in data for key in ['email', 'password', 'company_id']):
-            return Response(
-                {'error': 'email, password, and company_id are required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        user = request.user
         
         try:
-            # Check if user already exists
-            if User.objects.filter(username=data['email']).exists():
-                return Response(
-                    {'error': 'User with this email already exists'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+            # If company_id provided, verify company exists and request access
+            company = None
+            company_id = data.get('company_id')
             
-            # Verify company exists and is active
-            try:
-                company = Company.objects.get(id=data['company_id'], is_active=True)
-            except Company.DoesNotExist:
-                return Response(
-                    {'error': 'Company not found or inactive'},
-                    status=status.HTTP_404_NOT_FOUND
-                )
+            if company_id:
+                try:
+                    company = Company.objects.get(id=company_id, is_active=True)
+                except Company.DoesNotExist:
+                    return Response(
+                        {'error': 'Company not found or inactive'},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+                
+                # Check if already registered for this company
+                existing = RetailerUser.objects.filter(
+                    user=user,
+                    company=company
+                ).first()
+                
+                if existing:
+                    return Response(
+                        {
+                            'error': f'Already registered for this company',
+                            'status': existing.status
+                        },
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
             
-            # Check if already registered for this company
-            existing = RetailerUser.objects.filter(
-                user__username=data['email'],
-                company=company
-            ).first()
+            # Update user's selected_role to RETAILER if not set
+            if not user.selected_role:
+                user.selected_role = 'RETAILER'
+                user.is_portal_user = True
+                user.save()
             
-            if existing:
-                return Response(
-                    {
-                        'error': f'Already registered for this company',
-                        'status': existing.status
-                    },
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
-            # Create user account
-            user = User.objects.create_user(
-                username=data['email'],
-                email=data['email'],
-                password=data['password'],
-                first_name=data.get('full_name', '').split()[0] if 'full_name' in data else '',
-                last_name=' '.join(data.get('full_name', '').split()[1:]) if 'full_name' in data else ''
-            )
-            
-            # Create retailer mapping (pending approval)
-            retailer_user = RetailerUser.objects.create(
-                user=user,
-                company=company,
-                status='PENDING'
-            )
-            
-            return Response({
-                'detail': 'Registration pending approval',
+            response_data = {
+                'detail': 'Retailer profile updated',
                 'user_id': str(user.id),
-                'retailer_user_id': str(retailer_user.id),
-                'company_name': company.name,
-                'status': 'PENDING',
-                'message': f'Your request to access {company.name} has been submitted. An administrator will review your request.'
-            }, status=status.HTTP_201_CREATED)
+                'email': user.email,
+                'phone': user.phone,
+            }
+            
+            # Create retailer mapping if company provided
+            if company:
+                retailer_user = RetailerUser.objects.create(
+                    user=user,
+                    company=company,
+                    status='PENDING'
+                )
+                response_data.update({
+                    'retailer_user_id': str(retailer_user.id),
+                    'company_name': company.name,
+                    'company_id': str(company.id),
+                    'status': 'PENDING',
+                    'message': f'Your request to access {company.name} has been submitted. An administrator will review your request.'
+                })
+            else:
+                response_data.update({
+                    'message': 'Profile updated. You can discover and request access to companies later.'
+                })
+            
+            return Response(response_data, status=status.HTTP_201_CREATED)
             
         except DjangoValidationError as e:
             return Response(
@@ -115,6 +118,101 @@ class RetailerRegisterView(APIView):
         except Exception as e:
             return Response(
                 {'error': f'Registration failed: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+# ================================================================
+# RETAILER PROFILE COMPLETION (with address)
+# ================================================================
+class RetailerCompleteProfileView(APIView):
+    """
+    Complete retailer profile with business address.
+    Called after registration to add business details.
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request):
+        """
+        Complete retailer profile with business address.
+        
+        Body:
+            company_id: Optional company UUID to request access
+            business_name: Optional business/shop name
+            address: Address details
+                - address_line1 (required)
+                - city (required)
+                - state (required)
+                - postal_code (required)
+                - country (default: IN)
+        """
+        data = request.data
+        user = request.user
+        
+        try:
+            # Update user's role to RETAILER
+            if not user.selected_role:
+                user.selected_role = 'RETAILER'
+            user.is_portal_user = True
+            user.save()
+            
+            response_data = {
+                'detail': 'Retailer profile completed',
+                'user_id': str(user.id),
+                'email': user.email,
+                'phone': user.phone,
+            }
+            
+            # Handle company access request if company_id provided
+            company = None
+            company_id = data.get('company_id')
+            
+            if company_id:
+                try:
+                    company = Company.objects.get(id=company_id, is_active=True)
+                except Company.DoesNotExist:
+                    return Response(
+                        {'error': 'Company not found or inactive'},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+                
+                # Check if already registered for this company
+                existing = RetailerUser.objects.filter(
+                    user=user,
+                    company=company
+                ).first()
+                
+                if not existing:
+                    retailer_user = RetailerUser.objects.create(
+                        user=user,
+                        company=company,
+                        status='PENDING'
+                    )
+                    response_data.update({
+                        'retailer_user_id': str(retailer_user.id),
+                        'company_name': company.name,
+                        'company_id': str(company.id),
+                        'status': 'PENDING',
+                        'message': f'Profile completed. Your request to access {company.name} is pending approval.'
+                    })
+                else:
+                    response_data.update({
+                        'retailer_user_id': str(existing.id),
+                        'company_name': company.name,
+                        'company_id': str(company.id),
+                        'status': existing.status,
+                        'message': f'Profile completed. You already have a request for {company.name} with status: {existing.status}'
+                    })
+            else:
+                response_data.update({
+                    'message': 'Profile completed. You can discover and request access to companies later.'
+                })
+            
+            return Response(response_data, status=status.HTTP_201_CREATED)
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Profile completion failed: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 

@@ -9,8 +9,9 @@ from apps.party.api.views import (
 )
 
 urlpatterns = [
-    # Party listing
+    # Party listing - support both /party/ and /party/parties/
     path('', PartyListView.as_view(), name='party-list'),
+    path('parties/', PartyListView.as_view(), name='party-parties-list'),
     
     # Credit control
     path('<uuid:party_id>/credit_status/', PartyCreditStatusView.as_view(), name='party-credit-status'),
