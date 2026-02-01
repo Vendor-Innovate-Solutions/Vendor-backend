@@ -42,9 +42,27 @@ class CompanyScopeMiddleware(MiddlewareMixin):
             request.company = user.active_company
             return
         
-        # 4) If no header and no active_company → no context
+        # 4) If no header and no active_company → try to get default company from CompanyUser
         if not company_id:
-            request.company = None
+            from apps.company.models import CompanyUser
+            # Try to get user's default company
+            company_user = CompanyUser.objects.select_related('company').filter(
+                user=user,
+                is_active=True,
+                is_default=True
+            ).first()
+            
+            if not company_user:
+                # Fallback to any active company membership
+                company_user = CompanyUser.objects.select_related('company').filter(
+                    user=user,
+                    is_active=True
+                ).first()
+            
+            if company_user:
+                request.company = company_user.company
+            else:
+                request.company = None
             return
         
         # 5) Resolve company_id to Company object

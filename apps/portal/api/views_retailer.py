@@ -225,9 +225,9 @@ class RetailerApproveView(APIView):
     Admin endpoint to approve/reject retailer access requests.
     
     POST: Approve retailer access
-    Requires: ADMIN role
+    Requires: ADMIN or OWNER role
     """
-    permission_classes = [RolePermission.require(['ADMIN'])]
+    permission_classes = [IsAuthenticated, RolePermission.require(['ADMIN', 'OWNER'])]
     
     def post(self, request, retailer_id):
         """
@@ -333,9 +333,9 @@ class RetailerRejectView(APIView):
     Admin endpoint to reject retailer access requests.
     
     POST: Reject retailer access
-    Requires: ADMIN role
+    Requires: ADMIN or OWNER role
     """
-    permission_classes = [RolePermission.require(['ADMIN'])]
+    permission_classes = [IsAuthenticated, RolePermission.require(['ADMIN', 'OWNER'])]
     
     def post(self, request, retailer_id):
         """
@@ -378,9 +378,9 @@ class RetailerListView(APIView):
     Admin endpoint to list retailer access requests.
     
     GET: List all retailer users for company
-    Requires: ADMIN or ACCOUNTANT role
+    Requires: ADMIN or ACCOUNTANT role (OWNER also allowed)
     """
-    permission_classes = [RolePermission.require(['ADMIN', 'ACCOUNTANT'])]
+    permission_classes = [IsAuthenticated, RolePermission.require(['ADMIN', 'ACCOUNTANT', 'OWNER'])]
     
     def get(self, request):
         """List retailer users with optional status filter."""

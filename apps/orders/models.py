@@ -290,18 +290,18 @@ class OrderItem(CompanyScopedModel):
         ]
         constraints = [
             models.CheckConstraint(
-                check=(
+                condition=(
                     models.Q(sales_order__isnull=False, purchase_order__isnull=True) |
                     models.Q(sales_order__isnull=True, purchase_order__isnull=False)
                 ),
                 name="order_item_single_parent",
             ),
             models.CheckConstraint(
-                check=models.Q(quantity__gt=0),
+                condition=models.Q(quantity__gt=0),
                 name="order_item_quantity_positive",
             ),
             models.CheckConstraint(
-                check=models.Q(delivered_qty__gte=0),
+                condition=models.Q(delivered_qty__gte=0),
                 name="order_item_delivered_qty_non_negative",
             ),
         ]

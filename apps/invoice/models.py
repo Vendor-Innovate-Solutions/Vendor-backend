@@ -257,7 +257,7 @@ class InvoiceLine(BaseModel):
         ]
         constraints = [
             models.CheckConstraint(
-                check=models.Q(quantity__gt=0),
+                condition=models.Q(quantity__gt=0),
                 name="invoice_line_quantity_positive",
             ),
         ]

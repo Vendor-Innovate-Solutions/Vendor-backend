@@ -298,7 +298,7 @@ class PayrollRun(CompanyScopedModel):
         ]
         constraints = [
             models.CheckConstraint(
-                check=models.Q(pay_period_start__lt=models.F('pay_period_end')),
+                condition=models.Q(pay_period_start__lt=models.F('pay_period_end')),
                 name="payroll_period_start_before_end",
             ),
         ]

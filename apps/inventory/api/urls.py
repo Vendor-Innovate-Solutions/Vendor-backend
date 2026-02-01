@@ -10,12 +10,22 @@ from apps.inventory.api.views import (
     StockMovementView, StockTransferView,
     StockReservationView
 )
+from apps.inventory.api.views_stockcount import (
+    StockCountListView,
+    StockCountByProductView,
+    GodownListView
+)
 
 router = DefaultRouter()
 router.register('items', StockItemViewSet, basename='stock-items')
 router.register('godowns', GodownViewSet, basename='godowns')
 
 urlpatterns = [
+    # Stock count endpoints
+    path('stockcount/', StockCountListView.as_view(), name='stockcount-list'),
+    path('stockcount/by-product/', StockCountByProductView.as_view(), name='stockcount-by-product'),
+    path('godowns-list/', GodownListView.as_view(), name='godowns-list'),
+    
     # Stock balance endpoints
     path('balance/', StockBalanceView.as_view(), name='stock-balance'),
     path('balances/', StockBalanceListView.as_view(), name='stock-balance-list'),

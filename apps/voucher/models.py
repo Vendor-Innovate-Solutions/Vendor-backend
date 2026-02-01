@@ -228,11 +228,11 @@ class VoucherLine(BaseModel):
         ]
         constraints = [
             models.CheckConstraint(
-                check=models.Q(entry_type__in=['DR', 'CR']),
+                condition=models.Q(entry_type__in=['DR', 'CR']),
                 name="valid_dr_cr",
             ),
             models.CheckConstraint(
-                check=models.Q(amount__gt=0),
+                condition=models.Q(amount__gt=0),
                 name="voucher_line_amount_positive",
             ),
         ]
@@ -364,7 +364,7 @@ class PaymentLine(BaseModel):
         ]
         constraints = [
             models.CheckConstraint(
-                check=models.Q(amount_applied__gt=0),
+                condition=models.Q(amount_applied__gt=0),
                 name="payment_line_amount_positive",
             ),
         ]

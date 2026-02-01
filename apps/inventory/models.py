@@ -313,7 +313,7 @@ class StockMovement(CompanyScopedModel):
         ]
         constraints = [
             models.CheckConstraint(
-                check=models.Q(quantity__gt=0),
+                condition=models.Q(quantity__gt=0),
                 name="stock_movement_quantity_positive",
             ),
         ]

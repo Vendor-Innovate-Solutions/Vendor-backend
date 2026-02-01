@@ -25,10 +25,18 @@ from apps.company.api.views_onboarding import (
     InviteAcceptView,
     ExternalUserProfileView
 )
+from apps.company.api.views_connection import (
+    GenerateCompanyCodeView,
+    JoinByCompanyCodeView,
+    RetailerCompanyListView
+)
 
 urlpatterns = [
     # Onboarding APIs
     path('onboarding/create-company/', ManufacturerCompanyCreationView.as_view(), name='create-company'),
+    
+    # Company Connection APIs
+    path('connection/generate-code/', GenerateCompanyCodeView.as_view(), name='generate-company-code'),
     
     # Company Management - PHASE 1
     path('', CompanyListCreateView.as_view(), name='company-list'),

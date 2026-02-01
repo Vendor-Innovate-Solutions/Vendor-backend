@@ -197,7 +197,7 @@ class FinancialYear(CompanyScopedModel):
                 name="one_current_fy_per_company",
             ),
             models.CheckConstraint(
-                check=models.Q(start_date__lt=models.F('end_date')),
+                condition=models.Q(start_date__lt=models.F('end_date')),
                 name="fy_start_before_end",
             ),
         ]

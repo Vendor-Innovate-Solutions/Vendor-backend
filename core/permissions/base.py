@@ -87,8 +87,41 @@ class RolePermission(BasePermission):
                 if not request.user or not request.user.is_authenticated:
                     return False
                 
-                user_role = getattr(request.user, 'role', 'user')
+                from apps.company.models import CompanyUser
+                
+                # Get user role from multiple sources
+                user_role = getattr(request.user, 'role', None)
+                
+                # Check CompanyUser role - try with request.company first
+                if hasattr(request, 'company') and request.company:
+                    company_user = CompanyUser.objects.filter(
+                        user=request.user,
+                        company=request.company,
+                        is_active=True
+                    ).first()
+                    if company_user:
+                        user_role = company_user.role
+                else:
+                    # Fallback: get role from any active CompanyUser membership
+                    company_user = CompanyUser.objects.filter(
+                        user=request.user,
+                        is_active=True
+                    ).first()
+                    if company_user:
+                        user_role = company_user.role
+                
+                if not user_role:
+                    user_role = 'user'
+                
+                # Normalize roles for comparison
+                normalized_roles = [r.upper() for r in roles]
+                user_role_upper = user_role.upper()
+                
+                # OWNER has all permissions (highest level)
+                if user_role_upper == 'OWNER':
+                    return True
+                
                 # Check if user has any of the required roles
-                return user_role in roles or user_role.upper() in roles
+                return user_role_upper in normalized_roles
         
         return MultiRolePermission
