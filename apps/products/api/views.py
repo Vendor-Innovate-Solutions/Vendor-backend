@@ -42,6 +42,13 @@ class CategoryListCreateView(APIView):
     
     def post(self, request):
         """Create a new category."""
+        # Verify user has an active company
+        if not request.company:
+            return Response(
+                {'error': 'No active company found. Please ensure you have a company assigned.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
         serializer = CategorySerializer(data=request.data)
         if serializer.is_valid():
             serializer.save(company=request.company)
@@ -196,6 +203,13 @@ class ProductListCreateView(APIView):
     
     def post(self, request):
         """Create a new product."""
+        # Verify user has an active company
+        if not request.company:
+            return Response(
+                {'error': 'No active company found. Please ensure you have a company assigned.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
         serializer = ProductCreateUpdateSerializer(
             data=request.data,
             context={'request': request}

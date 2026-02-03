@@ -151,6 +151,9 @@ class ProductCreateUpdateSerializer(serializers.ModelSerializer):
             'brand',
             'unit',
             'price',
+            'available_quantity',
+            'total_shipped',
+            'total_required_quantity',
             'hsn_code',
             'cgst_rate',
             'sgst_rate',
@@ -178,6 +181,11 @@ class ProductCreateUpdateSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         """Create product with company context."""
         request = self.context.get('request')
+        if not request or not request.company:
+            raise serializers.ValidationError(
+                "No active company found. Please ensure you have a company assigned."
+            )
+        
         validated_data['company'] = request.company
         validated_data['created_by'] = request.user
         

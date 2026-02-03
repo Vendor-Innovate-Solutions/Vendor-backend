@@ -212,6 +212,19 @@ CORS_ALLOWED_ORIGINS = [
     "https://vendor-frontend-production-be99.up.railway.app",
 ]
 
+CORS_ALLOW_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+    'x-company-id',  # Allow our custom header
+]
+
 CSRF_TRUSTED_ORIGINS = [
     "https://vendor-backend-production-2053.up.railway.app",
     "http://localhost:3000",
