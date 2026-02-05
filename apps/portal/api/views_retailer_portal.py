@@ -10,8 +10,7 @@ from django.db import transaction
 from django.utils import timezone
 from decimal import Decimal
 
-from apps.portal.models import RetailerCompanyAccess
-from apps.party.models import RetailerUser
+from apps.portal.models import RetailerCompanyAccess, RetailerUser
 from apps.products.models import Product, Category
 from apps.inventory.models import StockItem, StockBalance
 from apps.orders.models import SalesOrder, OrderItem
@@ -92,7 +91,7 @@ class RetailerProductListView(APIView):
         # Get products from connected companies
         products = Product.objects.filter(
             company_id__in=company_ids,
-            is_active=True
+            status__in=['available', 'on_demand']
         ).select_related('company', 'category').prefetch_related(
             'stockitems', 'stockitems__stock_balances'
         ).order_by('company__name', 'name')
@@ -122,8 +121,11 @@ class RetailerProductListView(APIView):
                 item_stock = sum(b.quantity for b in stock_item.stock_balances.all())
                 total_stock += item_stock
             
+            # Fallback to product.available_quantity if no stock items exist
+            available_qty = int(total_stock) if total_stock > 0 else int(product.available_quantity)
+            
             # Skip if in_stock filter is on and no stock
-            if in_stock_only and total_stock <= 0:
+            if in_stock_only and available_qty <= 0:
                 continue
             
             data.append({
@@ -133,7 +135,7 @@ class RetailerProductListView(APIView):
                 "category": product.category.name if product.category else None,
                 "category_id": str(product.category.id) if product.category else None,
                 "price": str(product.price),
-                "available_quantity": int(total_stock),
+                "available_quantity": available_qty,
                 "unit": product.unit,
                 "hsn_code": product.hsn_code,
                 "brand": product.brand,
@@ -142,7 +144,7 @@ class RetailerProductListView(APIView):
                     "name": product.company.name,
                     "code": product.company.code
                 },
-                "in_stock": total_stock > 0,
+                "in_stock": available_qty > 0,
                 "cgst_rate": str(product.cgst_rate),
                 "sgst_rate": str(product.sgst_rate),
                 "igst_rate": str(product.igst_rate)
@@ -211,7 +213,7 @@ class RetailerCategoryListView(APIView):
         for category in categories:
             product_count = Product.objects.filter(
                 category=category,
-                is_active=True
+                status__in=['available', 'on_demand']
             ).count()
             
             data.append({
@@ -352,7 +354,7 @@ class RetailerPlaceOrderView(APIView):
                     product = Product.objects.get(
                         id=product_id,
                         company=company,
-                        is_active=True
+                        status__in=['available', 'on_demand']
                     )
                     
                     # Get first active stock item for this product

@@ -10,8 +10,8 @@ from django.utils import timezone
 from django.db import transaction
 
 from apps.company.models import Company, CompanyUser
-from apps.portal.models import RetailerCompanyAccess
-from apps.party.models import Party, RetailerUser
+from apps.portal.models import RetailerCompanyAccess, RetailerUser
+from apps.party.models import Party
 
 
 class GenerateCompanyCodeView(APIView):
@@ -122,12 +122,31 @@ class JoinByCompanyCodeView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
         
-        # Get or create retailer user
-        try:
-            retailer = RetailerUser.objects.get(user=user)
-        except RetailerUser.DoesNotExist:
+        # Check if user already has a RetailerUser record (OneToOne with User)
+        existing_retailer = RetailerUser.objects.filter(user=user).first()
+        
+        if existing_retailer:
+            # Check if there's already an access record for this company
+            existing_access = RetailerCompanyAccess.objects.filter(
+                retailer=existing_retailer,
+                company=company
+            ).first()
+            
+            if existing_access:
+                return Response(
+                    {
+                        "error": "You are already connected to this company",
+                        "status": existing_access.status,
+                        "connection_id": str(existing_access.id)
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            retailer = existing_retailer
+            party = existing_retailer.party
+        else:
             # Create retailer profile if doesn't exist
-            # First, check if user has a party
+            # First, check if user has a party in this company
             party = Party.objects.filter(
                 company=company,
                 email=user.email
@@ -135,31 +154,73 @@ class JoinByCompanyCodeView(APIView):
             
             if not party:
                 # Create a new party for the retailer
-                from apps.accounting.models import Ledger, LedgerGroup
+                from apps.accounting.models import Ledger, AccountGroup
+                from apps.company.models import FinancialYear
+                import uuid
+                
+                # Get active financial year
+                financial_year = FinancialYear.objects.filter(
+                    company=company,
+                    is_current=True
+                ).first()
+                
+                if not financial_year:
+                    # Fallback: get most recent FY that's not closed
+                    financial_year = FinancialYear.objects.filter(
+                        company=company,
+                        is_closed=False
+                    ).order_by('-start_date').first()
+                
+                if not financial_year:
+                    # Last fallback: get any FY
+                    financial_year = FinancialYear.objects.filter(
+                        company=company
+                    ).order_by('-start_date').first()
+                
+                if not financial_year:
+                    return Response(
+                        {"error": "Company does not have a financial year configured"},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
                 
                 # Get Sundry Debtors group
-                debtors_group = LedgerGroup.objects.filter(
+                debtors_group = AccountGroup.objects.filter(
                     company=company,
                     name__icontains='sundry debtor'
                 ).first()
                 
                 if not debtors_group:
-                    debtors_group = LedgerGroup.objects.filter(
+                    # Fallback: get any asset group for customers
+                    debtors_group = AccountGroup.objects.filter(
                         company=company,
-                        group_type='CURRENT_ASSET'
+                        nature='DEBIT'
                     ).first()
+                
+                if not debtors_group:
+                    return Response(
+                        {"error": "Company does not have account groups configured. Please contact the company administrator."},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                # Generate unique ledger code
+                retailer_name = user.get_full_name() or user.email.split('@')[0]
+                ledger_code = f"RET-{uuid.uuid4().hex[:8].upper()}"
                 
                 # Create ledger
                 ledger = Ledger.objects.create(
                     company=company,
-                    name=f"{user.get_full_name() or user.email} (Retailer)",
-                    ledger_group=debtors_group
+                    code=ledger_code,
+                    name=f"{retailer_name} (Retailer)",
+                    group=debtors_group,
+                    account_type='CUSTOMER',
+                    opening_balance_fy=financial_year,
+                    is_bill_wise=True
                 )
                 
                 # Create party
                 party = Party.objects.create(
                     company=company,
-                    name=user.get_full_name() or user.email,
+                    name=retailer_name,
                     party_type='CUSTOMER',
                     ledger=ledger,
                     email=user.email,
@@ -167,25 +228,14 @@ class JoinByCompanyCodeView(APIView):
                     is_retailer=True
                 )
             
+            # Create RetailerUser (portal model - links user to party)
             retailer = RetailerUser.objects.create(
                 user=user,
-                party=party
-            )
-        
-        # Check if connection already exists
-        existing_access = RetailerCompanyAccess.objects.filter(
-            retailer=retailer,
-            company=company
-        ).first()
-        
-        if existing_access:
-            return Response(
-                {
-                    "error": "You are already connected to this company",
-                    "status": existing_access.status,
-                    "connection_id": str(existing_access.id)
-                },
-                status=status.HTTP_400_BAD_REQUEST
+                party=party,
+                is_primary_contact=True,
+                can_place_orders=True,
+                can_view_balance=True,
+                can_view_statements=True
             )
         
         # Create approved connection (auto-approve when joining by company code)

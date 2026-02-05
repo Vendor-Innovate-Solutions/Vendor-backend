@@ -125,24 +125,62 @@ class UserContextSerializer(serializers.Serializer):
         return obj.selected_role is not None
     
     def get_has_company(self, obj):
-        return obj.company_memberships.filter(is_active=True).exists()
+        # For manufacturers: check CompanyUser memberships
+        if obj.company_memberships.filter(is_active=True).exists():
+            return True
+        
+        # For retailers: check RetailerCompanyAccess via RetailerUser
+        if obj.selected_role == 'RETAILER':
+            from apps.portal.models import RetailerUser, RetailerCompanyAccess
+            retailer = RetailerUser.objects.filter(user=obj).first()
+            if retailer:
+                return RetailerCompanyAccess.objects.filter(
+                    retailer=retailer,
+                    status='APPROVED'
+                ).exists()
+        
+        return False
     
     def get_companies(self, obj):
         """Get all companies user belongs to"""
-        companies = obj.company_memberships.filter(is_active=True).select_related('company')
-        return [
-            {
+        companies_list = []
+        
+        # For manufacturers: get from CompanyUser memberships
+        company_memberships = obj.company_memberships.filter(is_active=True).select_related('company')
+        for cm in company_memberships:
+            companies_list.append({
                 'id': str(cm.company.id),
                 'name': cm.company.name,
                 'code': cm.company.code,
                 'role': cm.role,
                 'is_default': cm.is_default
-            }
-            for cm in companies
-        ]
+            })
+        
+        # For retailers: get from RetailerCompanyAccess
+        if obj.selected_role == 'RETAILER':
+            from apps.portal.models import RetailerUser, RetailerCompanyAccess
+            retailer = RetailerUser.objects.filter(user=obj).first()
+            if retailer:
+                accesses = RetailerCompanyAccess.objects.filter(
+                    retailer=retailer,
+                    status='APPROVED'
+                ).select_related('company')
+                for access in accesses:
+                    # Check if company already added (avoid duplicates)
+                    if not any(c['id'] == str(access.company.id) for c in companies_list):
+                        companies_list.append({
+                            'id': str(access.company.id),
+                            'name': access.company.name,
+                            'code': access.company.code,
+                            'role': 'RETAILER',
+                            'is_default': len(companies_list) == 0  # First one is default
+                        })
+        
+        return companies_list
     
     def get_default_company(self, obj):
         """Get default company"""
+        # For manufacturers: check CompanyUser
         try:
             default_cm = obj.company_memberships.filter(
                 is_active=True,
@@ -157,10 +195,29 @@ class UserContextSerializer(serializers.Serializer):
                 }
         except:
             pass
+        
+        # For retailers: get first approved company access
+        if obj.selected_role == 'RETAILER':
+            from apps.portal.models import RetailerUser, RetailerCompanyAccess
+            retailer = RetailerUser.objects.filter(user=obj).first()
+            if retailer:
+                access = RetailerCompanyAccess.objects.filter(
+                    retailer=retailer,
+                    status='APPROVED'
+                ).select_related('company').first()
+                if access:
+                    return {
+                        'id': str(access.company.id),
+                        'name': access.company.name,
+                        'code': access.company.code,
+                        'role': 'RETAILER'
+                    }
+        
         return None
     
     def get_default_company_id(self, obj):
         """Get default company ID"""
+        # For manufacturers: check CompanyUser
         try:
             default_cm = obj.company_memberships.filter(
                 is_active=True,
@@ -170,4 +227,17 @@ class UserContextSerializer(serializers.Serializer):
                 return str(default_cm.company.id)
         except:
             pass
+        
+        # For retailers: get first approved company access
+        if obj.selected_role == 'RETAILER':
+            from apps.portal.models import RetailerUser, RetailerCompanyAccess
+            retailer = RetailerUser.objects.filter(user=obj).first()
+            if retailer:
+                access = RetailerCompanyAccess.objects.filter(
+                    retailer=retailer,
+                    status='APPROVED'
+                ).first()
+                if access:
+                    return str(access.company.id)
+        
         return None

@@ -10,7 +10,7 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from core.permissions.base import RolePermission
 from apps.orders.models import SalesOrder, OrderItem
 from apps.orders.services.sales_order_service import SalesOrderService
-from apps.party.models import RetailerUser
+from apps.portal.models import RetailerUser
 
 
 class PortalOrderCreateView(APIView):

@@ -9,7 +9,8 @@ This document describes where security features are actually implemented and int
 1. [Product Barcode Generation](#1-product-barcode-generation)
 2. [Key Exchange for Secure Operations](#2-key-exchange-for-secure-operations)
 3. [Secure Payment Data Exchange](#3-secure-payment-data-exchange)
-4. [Implementation Summary](#4-implementation-summary)
+4. [Digital Signatures](#4-digital-signatures)
+5. [Implementation Summary](#5-implementation-summary)
 
 ---
 
@@ -302,7 +303,174 @@ Response:
 
 ---
 
-## 4. Implementation Summary
+## 4. Digital Signatures
+
+### Use Case
+Provide non-repudiation and data integrity verification for:
+- Invoice signing and verification
+- Contract authenticity
+- API request signing
+- Document integrity checks
+- Audit trail verification
+
+### Implementation Location
+- **Module**: [core/security/hashing.py](../core/security/hashing.py) - `DigitalSignature`, `DigitalSignatureData`
+- **Export**: [core/security/__init__.py](../core/security/__init__.py)
+- **Tests**: [tests/test_security.py](../tests/test_security.py) - `TestDigitalSignature`
+
+### How It Works
+
+```
+┌─────────────┐                              ┌─────────────┐
+│   SIGNER    │                              │  VERIFIER   │
+└──────┬──────┘                              └──────┬──────┘
+       │                                            │
+       │  1. Generate RSA key pair                  │
+       │     (private_key, public_key)              │
+       │                                            │
+       │  2. Hash the message (SHA-256)             │
+       │                                            │
+       │  3. Sign hash with private key (RSA-PSS)   │
+       │     → signature                            │
+       │                                            │
+       │  4. Send: {message, signature, public_key} │
+       │ ─────────────────────────────────────────► │
+       │                                            │
+       │                      5. Hash the message   │
+       │                      6. Verify signature   │
+       │                         with public_key    │
+       │                      7. Return: valid/invalid
+       │                                            │
+```
+
+### Example Usage
+
+#### Sign a Document
+```python
+from core.security import DigitalSignature, RSACipher
+
+# Generate or load RSA key pair
+rsa = RSACipher()
+key_pair = rsa.generate_key_pair()
+
+# Create signer
+signer = DigitalSignature()
+
+# Sign a message
+message = b"Invoice #INV-2026-001: Total Rs. 50,000"
+signature = signer.sign(message, key_pair.private_key)
+
+print(f"Signature: {signature.signature[:50]}...")
+print(f"Algorithm: {signature.algorithm}")
+print(f"Hash: {signature.hash_algorithm}")
+print(f"Timestamp: {signature.timestamp}")
+```
+
+#### Verify a Signature
+```python
+# Verify the signature
+is_valid = signer.verify(message, signature, key_pair.public_key)
+
+if is_valid:
+    print("✅ Signature is valid - document is authentic")
+else:
+    print("❌ Signature invalid - document may be tampered")
+```
+
+#### Sign a Complete Document with Metadata
+```python
+# Sign a full document with all metadata
+document = {
+    "invoice_id": "INV-2026-001",
+    "customer": "ABC Corp",
+    "amount": 50000,
+    "items": [...]
+}
+
+signed_doc = signer.sign_document(document, key_pair.private_key)
+
+# Result contains:
+# {
+#   "document": {...},
+#   "signature": {
+#     "signature": "base64...",
+#     "algorithm": "RSA-PSS",
+#     "hash_algorithm": "SHA256",
+#     "timestamp": "2026-02-05T10:30:00Z"
+#   }
+# }
+```
+
+#### Verify a Signed Document
+```python
+# Verify the signed document
+verified_doc = signer.verify_document(signed_doc, key_pair.public_key)
+
+if verified_doc:
+    print("✅ Document verified:", verified_doc)
+else:
+    print("❌ Document verification failed")
+```
+
+### Signature Data Structure
+
+```python
+class DigitalSignatureData:
+    signature: str      # Base64-encoded RSA-PSS signature
+    algorithm: str      # "RSA-PSS"
+    hash_algorithm: str # "SHA256"
+    timestamp: str      # ISO 8601 timestamp
+```
+
+### Security Properties
+
+| Property | Description |
+|----------|-------------|
+| **Authenticity** | Proves document was signed by private key holder |
+| **Integrity** | Detects any modification to signed content |
+| **Non-repudiation** | Signer cannot deny signing the document |
+| **Timestamping** | Records when signature was created |
+
+### Technical Details
+
+| Aspect | Implementation |
+|--------|----------------|
+| Algorithm | RSA-PSS (Probabilistic Signature Scheme) |
+| Hash | SHA-256 |
+| Key Size | RSA-2048 minimum |
+| Padding | PSS with MGF1 |
+| Salt Length | Maximum (hash length) |
+
+### Current Integration Status
+
+| Status | Description |
+|--------|-------------|
+| ✅ **Implemented** | Full `DigitalSignature` class in `core/security/hashing.py` |
+| ✅ **Tested** | Unit tests in `tests/test_security.py` |
+| ✅ **Exported** | Available via `from core.security import DigitalSignature` |
+| ⚠️ **Not Yet Integrated** | Not currently used in production endpoints |
+
+### Recommended Future Integrations
+
+1. **Invoice Signing**
+   - Sign invoices before sending to customers
+   - Verify invoice authenticity on receipt
+
+2. **API Request Signing**
+   - Sign critical API requests (payments, transfers)
+   - Prevent request tampering
+
+3. **Audit Trail**
+   - Sign audit log entries
+   - Ensure log integrity
+
+4. **Contract Documents**
+   - Sign agreements between parties
+   - Legal non-repudiation
+
+---
+
+## 5. Implementation Summary
 
 ### Files Created/Modified
 

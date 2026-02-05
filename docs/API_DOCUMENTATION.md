@@ -2467,6 +2467,34 @@ OR
 
 These APIs are designed for B2B retailer portal access.
 
+### Company Connection APIs (Manufacturer)
+
+#### Generate Company Code
+**GET** `/api/company/connection/generate-code/`  
+**[Protected]** - Requires authentication (Manufacturer/Company Owner)
+
+Manufacturers use this to get their company code to share with retailers for easy connection.
+
+**Response:**
+```json
+{
+  "company_code": "VENDOR001",
+  "company_name": "Vendor Company Pvt Ltd",
+  "company_id": "uuid",
+  "message": "Share this code with retailers to allow them to connect to your company"
+}
+```
+
+**Error Response (404):**
+```json
+{
+  "error": "No active company found for this user",
+  "detail": "Please create or select a company first"
+}
+```
+
+---
+
 ### Retailer Registration Flow
 
 The retailer registration flow is integrated with the main user registration:
@@ -2576,6 +2604,82 @@ Alternative endpoint to complete retailer profile with business address details.
   }
 ]
 ```
+
+---
+
+#### Join Company by Code
+**POST** `/api/portal/join-by-company-code/`  
+**[Protected]** - Requires authentication (Retailer role only)
+
+Retailers can join a manufacturer/supplier company by entering their company code. This creates an auto-approved connection, allowing immediate access to the company's catalog and ordering system.
+
+**Request:**
+```json
+{
+  "company_code": "VENDOR001"
+}
+```
+
+**Response (Success):**
+```json
+{
+  "message": "Successfully connected to Vendor Company",
+  "connection": {
+    "id": "uuid",
+    "company_id": "uuid",
+    "company_name": "Vendor Company",
+    "company_code": "VENDOR001",
+    "status": "APPROVED",
+    "connected_at": "2026-02-05T10:30:00Z"
+  }
+}
+```
+
+**Error Responses:**
+
+*Company code required:*
+```json
+{
+  "error": "Company code is required"
+}
+```
+
+*Company not found (404):*
+```json
+{
+  "error": "No active company found with code 'INVALID'"
+}
+```
+
+*Already connected (400):*
+```json
+{
+  "error": "You are already connected to this company",
+  "status": "APPROVED",
+  "connection_id": "uuid"
+}
+```
+
+*Non-retailer user (403):*
+```json
+{
+  "error": "Only retailers can join companies using company code",
+  "current_role": "MANUFACTURER"
+}
+```
+
+*Company not configured (400):*
+```json
+{
+  "error": "Company does not have a financial year configured"
+}
+```
+
+**Notes:**
+- Company code is case-insensitive (automatically converted to uppercase)
+- Connection is auto-approved when using company code
+- Creates ledger, party, and retailer records automatically
+- Retailer can immediately browse catalog and place orders after connecting
 
 ---
 

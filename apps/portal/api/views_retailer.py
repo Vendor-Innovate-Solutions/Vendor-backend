@@ -12,7 +12,8 @@ from django.utils import timezone
 from django.db.models import Q
 
 from core.permissions.base import RolePermission
-from apps.party.models import RetailerUser, Party, PartyAddress
+from apps.portal.models import RetailerUser
+from apps.party.models import Party, PartyAddress
 from apps.company.models import Company
 
 User = get_user_model()
