@@ -4,12 +4,16 @@ Retailer portal models - customer/retailer login and access management.
 from django.db import models
 from django.conf import settings
 from core.models import BaseModel
+from apps.party.models import RetailerUser as PartyRetailerUser
 
 
 class RetailerUser(BaseModel):
     """
     Login-enabled user for retailer/customer ordering.
     Links a User account to a Party (business entity).
+    
+    NOTE: This model is DEPRECATED. Use apps.party.models.RetailerUser instead.
+    Kept for migration compatibility only.
     """
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
@@ -65,7 +69,7 @@ class RetailerCompanyAccess(BaseModel):
     ]
 
     retailer = models.ForeignKey(
-        RetailerUser,
+        PartyRetailerUser,  # Use the RetailerUser from party app
         on_delete=models.CASCADE,
         related_name='company_accesses'
     )

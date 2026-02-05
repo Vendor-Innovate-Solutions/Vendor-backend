@@ -122,9 +122,9 @@ class JoinByCompanyCodeView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
         
-        # Get or create retailer user
+        # Get or create retailer user for this specific company
         try:
-            retailer = RetailerUser.objects.get(user=user)
+            retailer = RetailerUser.objects.get(user=user, company=company)
         except RetailerUser.DoesNotExist:
             # Create retailer profile if doesn't exist
             # First, check if user has a party
@@ -135,28 +135,32 @@ class JoinByCompanyCodeView(APIView):
             
             if not party:
                 # Create a new party for the retailer
-                from apps.accounting.models import Ledger, LedgerGroup
+                from apps.accounting.models import Ledger, AccountGroup
                 
-                # Get Sundry Debtors group
-                debtors_group = LedgerGroup.objects.filter(
+                ledger = None
+                
+                # Try to create a ledger if AccountGroup exists
+                debtors_group = AccountGroup.objects.filter(
                     company=company,
                     name__icontains='sundry debtor'
                 ).first()
                 
                 if not debtors_group:
-                    debtors_group = LedgerGroup.objects.filter(
+                    debtors_group = AccountGroup.objects.filter(
                         company=company,
-                        group_type='CURRENT_ASSET'
+                        nature='ASSET'
                     ).first()
                 
-                # Create ledger
-                ledger = Ledger.objects.create(
-                    company=company,
-                    name=f"{user.get_full_name() or user.email} (Retailer)",
-                    ledger_group=debtors_group
-                )
+                # Only create ledger if we have a valid group
+                if debtors_group:
+                    ledger = Ledger.objects.create(
+                        company=company,
+                        name=f"{user.get_full_name() or user.email} (Retailer)",
+                        code=f"RET-{user.id}",
+                        group=debtors_group
+                    )
                 
-                # Create party
+                # Create party (ledger can be null)
                 party = Party.objects.create(
                     company=company,
                     name=user.get_full_name() or user.email,
@@ -169,6 +173,7 @@ class JoinByCompanyCodeView(APIView):
             
             retailer = RetailerUser.objects.create(
                 user=user,
+                company=company,
                 party=party
             )
         
@@ -235,15 +240,15 @@ class RetailerCompanyListView(APIView):
         """List connected companies for retailer."""
         user = request.user
         
-        # Get retailer profile
-        try:
-            retailer = RetailerUser.objects.get(user=user)
-        except RetailerUser.DoesNotExist:
+        # Get all retailer profiles for this user (one per company)
+        retailer_ids = RetailerUser.objects.filter(user=user).values_list('id', flat=True)
+        
+        if not retailer_ids:
             return Response([], status=status.HTTP_200_OK)
         
-        # Get connections
+        # Get connections for all retailer profiles
         connections = RetailerCompanyAccess.objects.filter(
-            retailer=retailer
+            retailer_id__in=retailer_ids
         ).select_related('company').order_by('-approved_at', '-created_at')
         
         # Filter by status if provided

@@ -92,7 +92,8 @@ class RetailerProductListView(APIView):
         # Get products from connected companies
         products = Product.objects.filter(
             company_id__in=company_ids,
-            is_active=True
+            is_portal_visible=True,
+            status='available'
         ).select_related('company', 'category').prefetch_related(
             'stockitems', 'stockitems__stock_balances'
         ).order_by('company__name', 'name')
@@ -116,11 +117,9 @@ class RetailerProductListView(APIView):
         
         data = []
         for product in products:
-            # Calculate actual stock from stock items
-            total_stock = 0
-            for stock_item in product.stockitems.filter(is_active=True, is_stock_item=True):
-                item_stock = sum(b.quantity for b in stock_item.stock_balances.all())
-                total_stock += item_stock
+            # Use product's available_quantity field (display quantity)
+            # Note: This is the portal display field, actual stock tracking is in StockItem
+            total_stock = product.available_quantity
             
             # Skip if in_stock filter is on and no stock
             if in_stock_only and total_stock <= 0:
@@ -321,20 +320,19 @@ class RetailerPlaceOrderView(APIView):
             # Get company's base currency
             currency = company.base_currency
             
-            # Create order using service
+            # Create order using service (only pass supported parameters)
             order = SalesOrderService.create_order(
                 company=company,
-                customer_party_id=str(party.id),
-                currency_id=str(currency.id),
+                customer_party_id=party.id,
+                currency_id=currency.id,
                 price_list_id=None,
                 order_date=timezone.now().date(),
-                due_date=None,
-                shipping_address=request.data.get('delivery_address', ''),
-                billing_address=request.data.get('billing_address', ''),
-                payment_terms=request.data.get('payment_terms', ''),
-                notes=request.data.get('notes', 'Order from retailer portal'),
                 created_by=user
             )
+            
+            # Set additional fields after creation
+            order.notes = request.data.get('notes', 'Order from retailer portal')
+            order.save()
             
             # Add items
             total_amount = Decimal('0.00')
@@ -347,36 +345,59 @@ class RetailerPlaceOrderView(APIView):
                 if not product_id or quantity <= 0:
                     continue
                 
-                # Get product and find associated stock item
+                # Get product
                 try:
                     product = Product.objects.get(
                         id=product_id,
                         company=company,
-                        is_active=True
+                        is_portal_visible=True
                     )
                     
-                    # Get first active stock item for this product
+                    # Get or create stock item for this product
                     stock_item = product.stockitems.filter(
                         is_active=True,
                         is_stock_item=True
                     ).first()
                     
                     if not stock_item:
-                        continue
+                        # Create a stock item for this product
+                        from apps.inventory.models import UnitOfMeasure
+                        import uuid
+                        
+                        # Get or create default UOM
+                        uom, _ = UnitOfMeasure.objects.get_or_create(
+                            symbol=product.unit,
+                            defaults={
+                                'name': product.unit,
+                            }
+                        )
+                        
+                        # Generate unique SKU
+                        sku = f"PRD-{str(product.id)[:8].upper()}"
+                        
+                        stock_item = StockItem.objects.create(
+                            company=company,
+                            product=product,
+                            sku=sku,
+                            name=product.name,
+                            description=product.description or '',
+                            uom=uom,
+                            is_active=True,
+                            is_stock_item=True
+                        )
                     
                     # Add item to order
                     order_item = SalesOrderService.add_item(
                         order=order,
-                        item_id=str(stock_item.id),
-                        quantity=quantity,
-                        override_rate=product.price,
-                        uom_id=str(stock_item.uom.id) if stock_item.uom else None,
-                        discount_percent=Decimal('0.00'),
-                        notes=item_data.get('notes', '')
+                        item_id=stock_item.id,
+                        quantity=Decimal(str(quantity)),
+                        override_rate=product.price
                     )
                     
                     order_items.append(order_item)
-                    total_amount += order_item.line_total
+                    # Calculate line total: quantity * unit_rate * (1 - discount_pct/100)
+                    line_total = order_item.quantity * order_item.unit_rate * (Decimal('1') - order_item.discount_pct / Decimal('100'))
+                    total_amount += line_total
                     
                 except Product.DoesNotExist:
                     continue

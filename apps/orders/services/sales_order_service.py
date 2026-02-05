@@ -127,9 +127,12 @@ def _check_company_access(company: Company, party: Party) -> None:
     # For retailer parties, check approval
     if party.is_retailer:
         # Check if retailer user has approved access
-        from apps.portal.models import RetailerUser
+        from apps.party.models import RetailerUser
         
-        retailer_user = RetailerUser.objects.filter(party=party).first()
+        retailer_user = RetailerUser.objects.filter(
+            party=party,
+            company=company
+        ).first()
         if not retailer_user:
             raise ValidationError(
                 f"Party '{party.name}' is not registered as a retailer"
@@ -193,9 +196,10 @@ def _check_stock_availability(
     required_qty: Decimal
 ) -> None:
     """
-    Validate sufficient stock available using StockBalance cache.
+    Validate sufficient stock available.
     
-    Checks against quantity_on_hand in StockBalance (cached read model).
+    For portal products, checks Product.available_quantity field directly.
+    Falls back to StockBalance aggregation for non-portal items.
     
     Args:
         company: Company instance
@@ -205,15 +209,20 @@ def _check_stock_availability(
     Raises:
         ValidationError: If insufficient stock
     """
-    # Aggregate stock across all godowns for this item
     from django.db.models import Sum
     
-    total_stock = StockBalance.objects.filter(
-        company=company,
-        item=item
-    ).aggregate(
-        total=Sum('quantity_on_hand')
-    )['total'] or Decimal('0')
+    # Check if item has an associated product (portal item)
+    if hasattr(item, 'product') and item.product:
+        # Use product's available_quantity field (portal display value)
+        total_stock = Decimal(str(item.product.available_quantity))
+    else:
+        # Aggregate stock across all godowns for this item from StockBalance
+        total_stock = StockBalance.objects.filter(
+            company=company,
+            item=item
+        ).aggregate(
+            total=Sum('quantity_on_hand')
+        )['total'] or Decimal('0')
     
     if total_stock < required_qty:
         raise ValidationError(

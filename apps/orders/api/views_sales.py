@@ -5,12 +5,12 @@ RESTful endpoints for sales order management.
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
+from rest_framework.permissions import IsAuthenticated
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db.models import Count
 
 from core.drf.permissions import RolePermission
 from apps.orders.services.sales_order_service import SalesOrderService
-from apps.orders.services.reservations import get_sales_order_reservations
 from apps.orders.api.serializers import (
     SalesOrderSerializer, SalesOrderListSerializer,
     CreateSalesOrderSerializer, AddOrderItemSerializer,
@@ -293,7 +293,7 @@ class SalesOrderRemoveItemView(APIView):
 
 class SalesOrderConfirmView(APIView):
     """Confirm a sales order and reserve stock."""
-    permission_classes = [RolePermission.require(['ADMIN', 'SALES_MANAGER'])]
+    permission_classes = [IsAuthenticated]
     
     def post(self, request, order_id):
         """Confirm order."""
@@ -308,16 +308,12 @@ class SalesOrderConfirmView(APIView):
             )
         
         try:
-            order = SalesOrderService.confirm_order(order, pre_reserve_stock=True)
+            order = SalesOrderService.confirm_order(order, validate_stock=True, enforce_credit=True)
             serializer = SalesOrderSerializer(order)
-            
-            # Get reservations info
-            reservations = get_sales_order_reservations(order)
             
             return Response({
                 'order': serializer.data,
-                'message': 'Order confirmed and stock reserved',
-                'reservations_count': reservations.count()
+                'message': 'Order confirmed successfully'
             })
             
         except DjangoValidationError as e:

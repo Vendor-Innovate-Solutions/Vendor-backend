@@ -30,10 +30,13 @@ class Party(CompanyScopedModel):
     )
     
     # Direct ledger link (every party has ONE control ledger)
+    # Made nullable to allow retailer connections when accounting groups don't exist yet
     ledger = models.OneToOneField(
         "accounting.Ledger",
         on_delete=models.PROTECT,
         related_name='party',
+        null=True,
+        blank=True,
         help_text="Associated accounting ledger"
     )
     

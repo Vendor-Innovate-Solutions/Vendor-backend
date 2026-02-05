@@ -36,16 +36,18 @@ class SalesOrderSerializer(serializers.ModelSerializer):
     currency_code = serializers.CharField(source='currency.code', read_only=True)
     items = OrderItemSerializer(many=True, read_only=True, source='orderitem_set')
     total_amount = serializers.DecimalField(max_digits=15, decimal_places=2, read_only=True)
+    assigned_employee_id = serializers.UUIDField(source='assigned_employee.id', read_only=True, allow_null=True)
+    assigned_employee_name = serializers.CharField(source='assigned_employee.name', read_only=True, allow_null=True)
     
     class Meta:
         model = SalesOrder
         fields = [
             'id', 'order_number', 'customer', 'customer_name',
             'currency', 'currency_code', 'price_list',
-            'status', 'order_date', 'due_date', 'delivery_date',
-            'shipping_address', 'billing_address',
-            'payment_terms', 'notes',
+            'status', 'order_date', 'delivery_date',
+            'customer_po_number', 'terms_and_conditions', 'notes',
             'total_amount', 'items',
+            'assigned_employee_id', 'assigned_employee_name',
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'order_number', 'company', 'total_amount', 'created_at', 'updated_at']
@@ -57,14 +59,22 @@ class SalesOrderListSerializer(serializers.ModelSerializer):
     customer_name = serializers.CharField(source='customer.name', read_only=True)
     currency_code = serializers.CharField(source='currency.code', read_only=True)
     item_count = serializers.IntegerField(read_only=True)
+    assigned_employee_id = serializers.UUIDField(source='assigned_employee.id', read_only=True, allow_null=True)
+    assigned_employee_name = serializers.SerializerMethodField()
     
     class Meta:
         model = SalesOrder
         fields = [
             'id', 'order_number', 'customer_name',
-            'currency_code', 'status', 'order_date', 'due_date',
-            'item_count', 'created_at'
+            'currency_code', 'status', 'order_date', 'delivery_date',
+            'item_count', 'assigned_employee_id', 'assigned_employee_name',
+            'created_at'
         ]
+    
+    def get_assigned_employee_name(self, obj):
+        if obj.assigned_employee:
+            return obj.assigned_employee.name
+        return None
 
 
 class CreateSalesOrderSerializer(serializers.Serializer):

@@ -9,6 +9,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import get_user_model
 from django.conf import settings
 from django.db import transaction
+from django.http import JsonResponse
 from apps.users.models import PhoneOTP
 from apps.users.serializers import (
     UserRegistrationSerializer,
@@ -299,20 +300,45 @@ class RoleSelectionView(APIView):
         serializer = RoleSelectionSerializer(data=request.data)
         
         if serializer.is_valid():
-            request.user.selected_role = serializer.validated_data['role']
-            request.user.is_internal_user = True  # Mark as internal user
-            request.user.save()
-            
-            return Response(
-                {
-                    "message": "Role selected successfully",
-                    "role": request.user.selected_role,
-                    "user": UserDetailSerializer(request.user).data
-                },
-                status=status.HTTP_200_OK
-            )
+            try:
+                request.user.selected_role = serializer.validated_data['role']
+                request.user.is_internal_user = True  # Mark as internal user
+                # Clear active_company to avoid FK issues during onboarding
+                request.user.active_company = None
+                request.user.save()
+                
+                # Refresh from DB to ensure clean state
+                request.user.refresh_from_db()
+                
+                # Use JsonResponse instead of DRF Response to avoid rendering issues
+                return JsonResponse(
+                    {
+                        "message": "Role selected successfully",
+                        "role": request.user.selected_role,
+                        "user": {
+                            "id": str(request.user.id),
+                            "email": request.user.email,
+                            "phone": request.user.phone or "",
+                            "full_name": request.user.get_full_name(),
+                            "phone_verified": request.user.phone_verified,
+                        }
+                    },
+                    status=200
+                )
+            except Exception as e:
+                # Log the error and return a proper error response
+                import traceback
+                print(f"Error in RoleSelectionView: {str(e)}")
+                print(traceback.format_exc())
+                return JsonResponse(
+                    {
+                        "error": "Failed to set role",
+                        "detail": str(e)
+                    },
+                    status=500
+                )
         
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        return JsonResponse(serializer.errors, status=400)
 
 
 class UserContextView(APIView):

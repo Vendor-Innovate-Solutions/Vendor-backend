@@ -2,10 +2,8 @@
 Post-login routing middleware for role-based redirection.
 Enforces server-side routing logic based on user state.
 """
-from rest_framework.response import Response
-from rest_framework import status
+from django.http import JsonResponse
 from django.utils.deprecation import MiddlewareMixin
-import json
 
 
 class PostLoginRoutingMiddleware(MiddlewareMixin):
@@ -26,7 +24,9 @@ class PostLoginRoutingMiddleware(MiddlewareMixin):
         '/auth/logout',
         '/auth/signup',
         '/auth/select-role',
+        '/api/users/select-role',  # Add the actual API path
         '/me/context',
+        '/api/users/me/context',   # Add the actual API path
         '/invites/',
         '/partner/profile',
         '/health',
@@ -94,21 +94,14 @@ class PostLoginRoutingMiddleware(MiddlewareMixin):
         
         if should_redirect:
             # Return JSON response with redirect information
+            # Use JsonResponse instead of DRF Response to avoid rendering issues
             response_data = {
                 'error': 'REDIRECT_REQUIRED',
-                'status_code': status.HTTP_307_TEMPORARY_REDIRECT,
+                'status_code': 307,
                 **error_data
             }
             
-            # Check if request expects JSON (API call)
-            if request.META.get('HTTP_ACCEPT', '').startswith('application/json'):
-                return Response(
-                    response_data,
-                    status=status.HTTP_307_TEMPORARY_REDIRECT
-                )
-            
-            # For non-JSON requests, still return JSON but with redirect header
-            response = Response(response_data, status=status.HTTP_307_TEMPORARY_REDIRECT)
+            response = JsonResponse(response_data, status=307)
             response['Location'] = redirect_path
             return response
         

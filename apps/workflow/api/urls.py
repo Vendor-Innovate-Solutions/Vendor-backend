@@ -3,6 +3,8 @@ Workflow API URL Configuration
 """
 from django.urls import path
 from apps.workflow.api.views import (
+    AvailableEmployeesView,
+    AssignOrderToEmployeeView,
     ApprovalRequestView,
     ApprovalApproveView,
     ApprovalRejectView,
@@ -11,6 +13,10 @@ from apps.workflow.api.views import (
 )
 
 urlpatterns = [
+    # Employee management
+    path('employees/available/', AvailableEmployeesView.as_view(), name='available-employees'),
+    path('orders/<uuid:order_id>/assign/', AssignOrderToEmployeeView.as_view(), name='assign-order-employee'),
+    
     # Submit approval request
     path('request/', ApprovalRequestView.as_view(), name='approval-request'),
     

@@ -101,6 +101,16 @@ class SalesOrder(CompanyScopedModel):
         blank=True,
         related_name='created_sales_orders'
     )
+    
+    # Employee assignment for delivery/processing
+    assigned_employee = models.ForeignKey(
+        "hr.Employee",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='assigned_orders',
+        help_text="Employee assigned for delivery/processing"
+    )
 
     class Meta:
         unique_together = ("company", "order_number")

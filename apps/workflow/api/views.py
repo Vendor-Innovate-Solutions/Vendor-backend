@@ -1,7 +1,7 @@
 """
 Workflow API Views
 
-Endpoints for approval management (maker-checker-poster pattern).
+Endpoints for approval management (maker-checker-poster pattern) and employee allocation.
 """
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -12,6 +12,120 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 
 from core.permissions.base import HasCompanyContext, RolePermission
 from apps.workflow.models import Approval, ApprovalStatus
+
+
+class AvailableEmployeesView(APIView):
+    """
+    Get list of available employees for order allocation.
+    
+    GET /api/workflow/employees/available/
+    
+    Query params:
+    - order_id (optional): Order ID to check availability against
+    
+    Response:
+    {
+        "employees": [
+            {
+                "id": "uuid",
+                "employee_code": "EMP001",
+                "name": "John Doe",
+                "designation": "Delivery Manager",
+                "department": "Logistics"
+            }
+        ]
+    }
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        """Get available employees."""
+        from apps.hr.models import Employee
+        
+        company = request.company
+        order_id = request.query_params.get('order_id')
+        
+        # Get all active employees for the company
+        employees = Employee.objects.filter(
+            company=company,
+            is_active=True
+        ).select_related('department')
+        
+        employee_list = [{
+            'id': str(emp.id),
+            'employee_code': emp.employee_code,
+            'name': emp.name,
+            'designation': emp.designation,
+            'department': emp.department.name if emp.department else None
+        } for emp in employees]
+        
+        return Response({
+            'employees': employee_list
+        })
+
+
+class AssignOrderToEmployeeView(APIView):
+    """
+    Assign an order to an employee for processing/delivery.
+    
+    POST /api/workflow/orders/{order_id}/assign/
+    
+    Request:
+    {
+        "employee_id": "uuid"
+    }
+    
+    Response:
+    {
+        "message": "Order assigned successfully",
+        "order_id": "uuid",
+        "employee_id": "uuid"
+    }
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request, order_id):
+        """Assign order to employee."""
+        from apps.orders.models import SalesOrder
+        from apps.hr.models import Employee
+        
+        company = request.company
+        employee_id = request.data.get('employee_id')
+        
+        if not employee_id:
+            return Response(
+                {'error': 'employee_id is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            # Get order
+            order = SalesOrder.objects.get(company=company, id=order_id)
+            
+            # Get employee
+            employee = Employee.objects.get(company=company, id=employee_id, is_active=True)
+            
+            # Assign employee to order
+            order.assigned_employee = employee
+            order.save(update_fields=['assigned_employee', 'updated_at'])
+            
+            return Response({
+                'message': 'Order assigned successfully',
+                'order_id': str(order_id),
+                'employee_id': str(employee_id),
+                'employee_name': employee.name
+            })
+            
+        except SalesOrder.DoesNotExist:
+            return Response(
+                {'error': 'Order not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Employee.DoesNotExist:
+            return Response(
+                {'error': 'Employee not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
 
 
 class ApprovalRequestView(APIView):

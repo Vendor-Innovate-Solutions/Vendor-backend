@@ -62,6 +62,7 @@ MIDDLEWARE = [
     'core.middleware.company_scope.CompanyScopeMiddleware',  # Multi-tenant company scoping
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'core.middleware.drf_response.DRFResponseMiddleware',  # Render DRF responses (runs first in response phase)
 ]
 
 ROOT_URLCONF = 'config.urls'
