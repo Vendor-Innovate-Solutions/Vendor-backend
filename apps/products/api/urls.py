@@ -8,7 +8,8 @@ from apps.products.api.views import (
     CategoryDetailView,
     ProductListCreateView,
     ProductDetailView,
-    ProductSyncStockView
+    ProductSyncStockView,
+    ProductBarcodeView
 )
 
 urlpatterns = [
@@ -20,4 +21,5 @@ urlpatterns = [
     path('products/', ProductListCreateView.as_view(), name='product-list-create'),
     path('products/<uuid:product_id>/', ProductDetailView.as_view(), name='product-detail'),
     path('products/<uuid:product_id>/sync-stock/', ProductSyncStockView.as_view(), name='product-sync-stock'),
+    path('products/<uuid:product_id>/barcode/', ProductBarcodeView.as_view(), name='product-barcode'),
 ]

@@ -45,4 +45,7 @@ urlpatterns = [
     
     # Reporting APIs (Aging Reports)
     path('reports/', include('apps.reporting.api.urls')),
+    
+    # Security APIs (Key Exchange, Secure Data Transfer)
+    path('security/', include('core.security.urls')),
 ]

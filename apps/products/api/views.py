@@ -347,3 +347,93 @@ class ProductSyncStockView(APIView):
             'message': 'Stock synced successfully',
             'product': serializer.data
         })
+
+
+class ProductBarcodeView(APIView):
+    """
+    Generate barcode for a product.
+    
+    GET: Returns barcode image for product identification.
+    
+    Query Parameters:
+        - format: 'png' (default), 'base64', 'data_uri'
+        - type: 'code128' (default), 'ean13'
+        - include_text: 'true' (default) or 'false'
+    
+    The barcode encodes the product ID for inventory scanning.
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request, product_id):
+        """Generate barcode for product."""
+        from django.http import HttpResponse
+        from core.security import BarcodeGenerator, BarcodeType
+        
+        try:
+            product = Product.objects.get(id=product_id, company=request.company)
+        except Product.DoesNotExist:
+            return Response(
+                {'error': 'Product not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Get parameters
+        output_format = request.query_params.get('format', 'png')
+        barcode_type = request.query_params.get('type', 'code128')
+        include_text = request.query_params.get('include_text', 'true').lower() == 'true'
+        
+        # Create barcode data - use product ID or HSN code
+        # For Code128, we can use any alphanumeric string
+        # For EAN13, we need exactly 12 digits (13th is checksum)
+        barcode_data = str(product.id).replace('-', '')[:12].upper()
+        
+        try:
+            generator = BarcodeGenerator()
+            
+            # Select barcode type
+            if barcode_type == 'ean13':
+                # Pad with zeros for EAN13 (needs 12 digits)
+                barcode_data = barcode_data[:12].zfill(12)
+                # Ensure only digits for EAN13
+                if not barcode_data.isdigit():
+                    barcode_data = ''.join(filter(str.isdigit, str(product.id)))[:12].zfill(12)
+                bc_type = BarcodeType.EAN13
+            else:
+                bc_type = BarcodeType.CODE128
+            
+            # Generate barcode
+            barcode_bytes = generator.generate(barcode_data, bc_type)
+            
+            if output_format == 'base64':
+                import base64
+                encoded = base64.b64encode(barcode_bytes).decode('utf-8')
+                return Response({
+                    'product_id': str(product.id),
+                    'product_name': product.name,
+                    'barcode_data': barcode_data,
+                    'barcode_type': barcode_type,
+                    'barcode_base64': encoded,
+                    'mime_type': 'image/png'
+                })
+            elif output_format == 'data_uri':
+                import base64
+                encoded = base64.b64encode(barcode_bytes).decode('utf-8')
+                data_uri = f"data:image/png;base64,{encoded}"
+                return Response({
+                    'product_id': str(product.id),
+                    'product_name': product.name,
+                    'barcode_data': barcode_data,
+                    'barcode_type': barcode_type,
+                    'barcode_data_uri': data_uri
+                })
+            else:
+                # Return raw PNG image
+                response = HttpResponse(barcode_bytes, content_type='image/png')
+                response['Content-Disposition'] = f'inline; filename="barcode_{product.id}.png"'
+                return response
+                
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to generate barcode: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

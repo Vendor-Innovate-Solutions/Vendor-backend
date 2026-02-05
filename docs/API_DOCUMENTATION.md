@@ -20,6 +20,7 @@
 - [Workflow APIs](#workflow-apis)
 - [Reporting APIs](#reporting-apis)
 - [GST Compliance APIs](#gst-compliance-apis)
+- [Security APIs](#security-apis)
 
 ---
 
@@ -1538,6 +1539,50 @@ The company setup follows a 3-phase approach:
   "product_id": "uuid",
   "available_quantity": "125.000"
 }
+```
+
+---
+
+#### Generate Product Barcode
+**GET** `/api/catalog/products/{product_id}/barcode/`
+
+Generate a barcode image for product identification. Used for inventory scanning, POS systems, and stock management.
+
+**Query Parameters:**
+| Parameter | Values | Default | Description |
+|-----------|--------|---------|-------------|
+| `format` | `png`, `base64`, `data_uri` | `png` | Output format |
+| `type` | `code128`, `ean13` | `code128` | Barcode type |
+
+**Response (format=png):**
+Raw PNG image with `Content-Type: image/png`
+
+**Response (format=base64):**
+```json
+{
+  "product_id": "123e4567-e89b-12d3-a456-426614174000",
+  "product_name": "Cement 50kg Bag",
+  "barcode_data": "123E4567E89B",
+  "barcode_type": "code128",
+  "barcode_base64": "iVBORw0KGgoAAAANSUhEUg...",
+  "mime_type": "image/png"
+}
+```
+
+**Response (format=data_uri):**
+```json
+{
+  "product_id": "123e4567-e89b-12d3-a456-426614174000",
+  "product_name": "Cement 50kg Bag",
+  "barcode_data": "123E4567E89B",
+  "barcode_type": "code128",
+  "barcode_data_uri": "data:image/png;base64,iVBORw0KGgo..."
+}
+```
+
+**Use in Frontend:**
+```html
+<img src="{{ barcode_data_uri }}" alt="Product Barcode">
 ```
 
 ---
@@ -3143,6 +3188,173 @@ Alternative endpoint to complete retailer profile with business address details.
     }
   ]
 }
+```
+
+---
+
+## Security APIs
+
+**Base Path:** `/api/security/`
+
+These endpoints provide secure key exchange and encrypted data transfer capabilities for sensitive operations.
+
+### Key Exchange
+
+Establishes an end-to-end encrypted communication channel between client and server using RSA key exchange and AES session keys.
+
+#### Initiate Key Exchange
+**POST** `/api/security/key-exchange/initiate/`
+
+Generates an RSA key pair and returns the public key. The client uses this to encrypt a session key.
+
+**Request:** Empty body
+
+**Response:**
+```json
+{
+  "session_id": "abc12345-6789-0def-ghij-klmnopqrstuv",
+  "public_key": "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkq...\n-----END PUBLIC KEY-----",
+  "expires_in_seconds": 300,
+  "algorithm": "RSA-2048",
+  "usage": "Use this public key to encrypt your session key, then send it to /key-exchange/complete/"
+}
+```
+
+---
+
+#### Complete Key Exchange
+**POST** `/api/security/key-exchange/complete/`
+
+Completes the key exchange by receiving the encrypted session key from the client.
+
+**Request:**
+```json
+{
+  "session_id": "abc12345-6789-0def-ghij-klmnopqrstuv",
+  "encrypted_session_key": "base64-encoded-rsa-encrypted-aes-key"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "session_id": "abc12345-6789-0def-ghij-klmnopqrstuv",
+  "message": "Session key received. Use /secure-data/ endpoints for encrypted communication.",
+  "expires_in_seconds": 3600
+}
+```
+
+---
+
+### Secure Data Transfer
+
+After completing key exchange, use these endpoints to send/receive AES-encrypted data.
+
+#### Send Encrypted Data
+**POST** `/api/security/secure-data/send/`
+
+Send AES-encrypted data to the server using the established session key.
+
+**Request:**
+```json
+{
+  "session_id": "abc12345-6789-0def-ghij-klmnopqrstuv",
+  "encrypted_data": "base64-encoded-aes-encrypted-data"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message_id": "msg-uuid",
+  "message": "Data securely received",
+  "data_size": 256
+}
+```
+
+---
+
+#### Receive Encrypted Data
+**GET** `/api/security/secure-data/receive/?session_id={session_id}`
+
+Retrieve encrypted messages waiting for the current user.
+
+**Response:**
+```json
+{
+  "messages": [],
+  "session_id": "abc12345-6789-0def-ghij-klmnopqrstuv",
+  "message": "No pending encrypted messages"
+}
+```
+
+---
+
+### Secure Payment
+
+Process sensitive payment information with end-to-end encryption.
+
+#### Submit Encrypted Payment Data
+**POST** `/api/security/secure-payment/`
+
+**Request:**
+```json
+{
+  "session_id": "abc12345-6789-0def-ghij-klmnopqrstuv",
+  "encrypted_payment_data": "base64-encoded-encrypted-json"
+}
+```
+
+The encrypted payload (before encryption) should contain:
+```json
+{
+  "amount": 1500.00,
+  "currency": "INR",
+  "payment_method": "upi",
+  "upi_id": "user@paytm"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "transaction_id": "txn-uuid",
+  "encrypted_response": "base64-encoded-encrypted-response",
+  "message": "Payment data received securely"
+}
+```
+
+---
+
+### Key Exchange Flow Diagram
+
+```
+CLIENT                                    SERVER
+  │                                          │
+  │  1. POST /key-exchange/initiate/         │
+  │ ────────────────────────────────────────►│
+  │                                          │
+  │  2. {session_id, public_key}             │
+  │ ◄────────────────────────────────────────│
+  │                                          │
+  │  3. Generate AES-256 session key         │
+  │     Encrypt with server's public key     │
+  │                                          │
+  │  4. POST /key-exchange/complete/         │
+  │     {session_id, encrypted_session_key}  │
+  │ ────────────────────────────────────────►│
+  │                                          │
+  │  5. {success: true}                      │
+  │ ◄────────────────────────────────────────│
+  │                                          │
+  │  ══════ SECURE CHANNEL READY ══════      │
+  │                                          │
+  │  6. POST /secure-data/send/              │
+  │     {session_id, encrypted_data}         │
+  │ ────────────────────────────────────────►│
 ```
 
 ---
