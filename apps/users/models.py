@@ -84,9 +84,19 @@ class PasswordResetOTP(models.Model):
 class PhoneOTP(models.Model):
     """
     OTP-based phone number verification mechanism.
-    Used for mobile app registration and phone number verification.
+    Used for mobile app registration, phone number verification, and login 2FA.
     User is nullable to support pre-registration phone verification.
     """
+    # OTP Purpose choices
+    PURPOSE_REGISTRATION = 'registration'
+    PURPOSE_LOGIN = 'login'
+    PURPOSE_PASSWORD_RESET = 'password_reset'
+    PURPOSE_CHOICES = [
+        (PURPOSE_REGISTRATION, 'Registration'),
+        (PURPOSE_LOGIN, 'Login'),
+        (PURPOSE_PASSWORD_RESET, 'Password Reset'),
+    ]
+    
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -96,6 +106,11 @@ class PhoneOTP(models.Model):
     )
     phone_number = models.CharField(max_length=20)
     otp = models.CharField(max_length=6)
+    purpose = models.CharField(
+        max_length=20,
+        choices=PURPOSE_CHOICES,
+        default=PURPOSE_REGISTRATION
+    )
     is_verified = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField()

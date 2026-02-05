@@ -4,7 +4,7 @@ Authentication API views.
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from rest_framework_simplejwt.tokens import RefreshToken
 from core.auth.serializers import ERPTokenObtainPairSerializer
@@ -282,3 +282,154 @@ class MeView(APIView):
                 data['available_companies'] = []
         
         return Response(data, status=status.HTTP_200_OK)
+
+
+class LoginOTPRequestView(APIView):
+    """
+    Step 1 of OTP-based Login: Validate credentials and send OTP.
+    
+    POST /auth/login/request-otp/
+    {
+        "email": "user@example.com",
+        "password": "password123"
+    }
+    
+    Response (Success):
+    {
+        "message": "OTP sent successfully",
+        "phone": "+91****5678",  # Masked phone number
+        "expires_in_minutes": 10
+    }
+    
+    Response (Error):
+    {
+        "email": "No user found with this email address."
+    }
+    or
+    {
+        "detail": "Invalid credentials."
+    }
+    """
+    permission_classes = [AllowAny]
+    
+    def post(self, request):
+        from core.auth.serializers import LoginOTPRequestSerializer
+        from apps.users.models import PhoneOTP
+        from django.conf import settings
+        from twilio.rest import Client
+        
+        serializer = LoginOTPRequestSerializer(data=request.data)
+        if serializer.is_valid():
+            user = serializer.validated_data['user']
+            phone = user.phone
+            
+            try:
+                # Invalidate any existing login OTPs for this user
+                PhoneOTP.objects.filter(
+                    user=user,
+                    purpose=PhoneOTP.PURPOSE_LOGIN,
+                    is_verified=False
+                ).delete()
+                
+                # Create new login OTP
+                phone_otp = PhoneOTP.objects.create(
+                    user=user,
+                    phone_number=phone,
+                    purpose=PhoneOTP.PURPOSE_LOGIN
+                )
+                
+                # Send OTP via Twilio
+                try:
+                    client = Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
+                    message = client.messages.create(
+                        body=f"Your Vendor login verification code is: {phone_otp.otp}. It will expire in 10 minutes. Do not share this code with anyone.",
+                        from_=settings.TWILIO_PHONE_NUMBER,
+                        to=phone
+                    )
+                except Exception as sms_error:
+                    # Log the error but don't expose details to user
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.error(f"Failed to send SMS to {phone}: {str(sms_error)}")
+                    return Response(
+                        {"error": "Failed to send OTP. Please try again later."},
+                        status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                    )
+                
+                # Mask phone number for response (show last 4 digits)
+                masked_phone = phone[:-4].replace(phone[:-4], '*' * len(phone[:-4])) + phone[-4:]
+                
+                return Response({
+                    "message": "OTP sent successfully",
+                    "phone": masked_phone,
+                    "expires_in_minutes": 10
+                }, status=status.HTTP_200_OK)
+                
+            except Exception as e:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Error in LoginOTPRequestView: {str(e)}")
+                return Response(
+                    {"error": "An error occurred. Please try again."},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+        
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class LoginOTPVerifyView(APIView):
+    """
+    Step 2 of OTP-based Login: Verify OTP and issue JWT tokens.
+    
+    POST /auth/login/verify-otp/
+    {
+        "email": "user@example.com",
+        "otp": "123456"
+    }
+    
+    Response (Success):
+    {
+        "message": "Login successful",
+        "access": "eyJ0eXAiOiJKV1QiLCJhb...",
+        "refresh": "eyJ0eXAiOiJKV1QiLCJhb...",
+        "user": {
+            "id": "123",
+            "email": "user@example.com",
+            "phone": "+1234567890"
+        }
+    }
+    
+    Response (Error):
+    {
+        "otp": "Invalid OTP. 2 attempts remaining."
+    }
+    or
+    {
+        "otp": "OTP has expired. Please request a new one."
+    }
+    """
+    permission_classes = [AllowAny]
+    
+    def post(self, request):
+        from core.auth.serializers import LoginOTPVerifySerializer, ERPTokenObtainPairSerializer
+        
+        serializer = LoginOTPVerifySerializer(data=request.data)
+        if serializer.is_valid():
+            user = serializer.validated_data['user']
+            
+            # Generate JWT tokens using existing token generator
+            refresh = ERPTokenObtainPairSerializer.get_token(user)
+            
+            return Response({
+                "message": "Login successful",
+                "access": str(refresh.access_token),
+                "refresh": str(refresh),
+                "user": {
+                    "id": str(user.id),
+                    "email": user.email,
+                    "phone": user.phone,
+                    "full_name": user.get_full_name(),
+                }
+            }, status=status.HTTP_200_OK)
+        
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)

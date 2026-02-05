@@ -39,10 +39,12 @@ Content-Type: application/json
 **POST** `/auth/login/`  
 **[Public]**
 
+Standard JWT login without OTP verification. Use this for quick access or when 2FA is not required.
+
 **Request:**
 ```json
 {
-  "username": "user@example.com",
+  "email": "user@example.com",
   "password": "password123"
 }
 ```
@@ -60,6 +62,110 @@ Content-Type: application/json
   }
 }
 ```
+
+---
+
+### Login with OTP (2-Factor Authentication)
+
+For enhanced security, the system supports OTP-based login. This is a 2-step process:
+
+#### Step 1: Request Login OTP
+**POST** `/auth/login/request-otp/`  
+**[Public]**
+
+Validates user credentials (email + password) and sends an OTP to the user's registered phone number.
+
+**Request:**
+```json
+{
+  "email": "user@example.com",
+  "password": "password123"
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "message": "OTP sent successfully",
+  "phone": "******5678",
+  "expires_in_minutes": 10
+}
+```
+
+**Error Response (400 Bad Request - Invalid Credentials):**
+```json
+{
+  "detail": "Invalid credentials."
+}
+```
+
+**Error Response (400 Bad Request - User Not Found):**
+```json
+{
+  "email": "No user found with this email address."
+}
+```
+
+**Error Response (400 Bad Request - No Phone):**
+```json
+{
+  "phone": "No phone number associated with this account. Please contact support."
+}
+```
+
+---
+
+#### Step 2: Verify Login OTP
+**POST** `/auth/login/verify-otp/`  
+**[Public]**
+
+Verifies the OTP and issues JWT tokens upon successful verification.
+
+**Request:**
+```json
+{
+  "email": "user@example.com",
+  "otp": "123456"
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "message": "Login successful",
+  "access": "eyJ0eXAiOiJKV1QiLCJhbGc...",
+  "refresh": "eyJ0eXAiOiJKV1QiLCJhbGc...",
+  "user": {
+    "id": "uuid",
+    "email": "user@example.com",
+    "phone": "+1234567890",
+    "full_name": "John Doe"
+  }
+}
+```
+
+**Error Response (400 Bad Request - Invalid OTP):**
+```json
+{
+  "otp": "Invalid OTP. 2 attempts remaining."
+}
+```
+
+**Error Response (400 Bad Request - Expired OTP):**
+```json
+{
+  "otp": "OTP has expired. Please request a new one."
+}
+```
+
+**Error Response (400 Bad Request - Max Attempts):**
+```json
+{
+  "otp": "Maximum OTP attempts exceeded. Please request a new OTP."
+}
+```
+
+---
 
 ### Refresh Token
 **POST** `/auth/token/refresh/`

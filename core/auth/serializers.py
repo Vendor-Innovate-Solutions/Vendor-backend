@@ -4,6 +4,7 @@ Custom JWT serializers with ERP-specific claims.
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 
 User = get_user_model()
 
@@ -151,3 +152,118 @@ class ERPTokenObtainPairSerializer(TokenObtainPairSerializer):
             token['retailer'] = None
         
         return token
+
+
+class LoginOTPRequestSerializer(serializers.Serializer):
+    """
+    Serializer for Step 1 of OTP-based login.
+    Validates email and password, returns session token for OTP verification.
+    """
+    email = serializers.EmailField(required=True)
+    password = serializers.CharField(required=True, write_only=True)
+    
+    def validate(self, attrs):
+        email = attrs.get('email')
+        password = attrs.get('password')
+        
+        if not email or not password:
+            raise serializers.ValidationError({
+                'detail': 'Email and password are required.'
+            })
+        
+        # Find user by email
+        try:
+            user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            raise serializers.ValidationError({
+                'email': 'No user found with this email address.'
+            })
+        
+        # Check password
+        if not user.check_password(password):
+            raise serializers.ValidationError({
+                'detail': 'Invalid credentials.'
+            })
+        
+        # Check if user is active
+        if not user.is_active:
+            raise serializers.ValidationError({
+                'detail': 'User account is disabled.'
+            })
+        
+        # Check if user has phone number
+        if not user.phone:
+            raise serializers.ValidationError({
+                'phone': 'No phone number associated with this account. Please contact support.'
+            })
+        
+        attrs['user'] = user
+        return attrs
+
+
+class LoginOTPVerifySerializer(serializers.Serializer):
+    """
+    Serializer for Step 2 of OTP-based login.
+    Validates OTP and returns JWT tokens.
+    """
+    email = serializers.EmailField(required=True)
+    otp = serializers.CharField(required=True, min_length=6, max_length=6)
+    
+    def validate_otp(self, value):
+        if not value.isdigit():
+            raise serializers.ValidationError("OTP must contain only digits.")
+        return value
+    
+    def validate(self, attrs):
+        from apps.users.models import PhoneOTP
+        
+        email = attrs.get('email')
+        otp = attrs.get('otp')
+        
+        # Find user by email
+        try:
+            user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            raise serializers.ValidationError({
+                'email': 'No user found with this email address.'
+            })
+        
+        # Find the latest login OTP for this user
+        try:
+            phone_otp = PhoneOTP.objects.filter(
+                user=user,
+                purpose=PhoneOTP.PURPOSE_LOGIN,
+                is_verified=False
+            ).latest('created_at')
+        except PhoneOTP.DoesNotExist:
+            raise serializers.ValidationError({
+                'otp': 'No OTP found for this account. Please request a new one.'
+            })
+        
+        # Check if OTP is expired
+        if phone_otp.is_expired():
+            raise serializers.ValidationError({
+                'otp': 'OTP has expired. Please request a new one.'
+            })
+        
+        # Check max attempts
+        if phone_otp.attempts >= 3:
+            raise serializers.ValidationError({
+                'otp': 'Maximum OTP attempts exceeded. Please request a new OTP.'
+            })
+        
+        # Validate OTP
+        if phone_otp.otp != otp:
+            phone_otp.attempts += 1
+            phone_otp.save()
+            remaining = 3 - phone_otp.attempts
+            raise serializers.ValidationError({
+                'otp': f'Invalid OTP. {remaining} attempts remaining.'
+            })
+        
+        # Mark OTP as verified
+        phone_otp.is_verified = True
+        phone_otp.save()
+        
+        attrs['user'] = user
+        return attrs
