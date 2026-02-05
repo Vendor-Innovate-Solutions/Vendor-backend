@@ -475,7 +475,7 @@ class RetailerOrderListView(APIView):
         orders = SalesOrder.objects.filter(
             customer=party
         ).select_related('company', 'currency').prefetch_related(
-            'orderitem_set'
+            'items'
         ).order_by('-order_date', '-created_at')
         
         # Filter by company
@@ -490,9 +490,9 @@ class RetailerOrderListView(APIView):
         
         data = []
         for order in orders:
-            # Calculate total
-            items = order.orderitem_set.all()
-            total_amount = sum(item.line_total for item in items)
+            # Calculate total (quantity * unit_rate for each item)
+            items = order.items.all()
+            total_amount = sum((item.quantity * item.unit_rate) for item in items)
             
             data.append({
                 "id": str(order.id),
