@@ -12,6 +12,42 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def clean_xml_content(xml_content: str) -> str:
+    """
+    Clean XML content to remove invalid characters that Tally sometimes includes
+    """
+    if not xml_content:
+        return xml_content
+    
+    # Remove invalid XML characters (control characters except tab, newline, carriage return)
+    # XML 1.0 valid chars: #x9 | #xA | #xD | [#x20-#xD7FF] | [#xE000-#xFFFD] | [#x10000-#x10FFFF]
+    def is_valid_xml_char(char):
+        codepoint = ord(char)
+        return (
+            codepoint == 0x9 or
+            codepoint == 0xA or
+            codepoint == 0xD or
+            (0x20 <= codepoint <= 0xD7FF) or
+            (0xE000 <= codepoint <= 0xFFFD) or
+            (0x10000 <= codepoint <= 0x10FFFF)
+        )
+    
+    # Filter out invalid characters
+    cleaned = ''.join(char for char in xml_content if is_valid_xml_char(char))
+    
+    # Also fix invalid numeric character references
+    # Replace &#4; or similar invalid references
+    cleaned = re.sub(r'&#([0-8]|1[0-9]|2[0-9]|3[01]);', '', cleaned)
+    
+    # Replace common problematic characters with safe alternatives
+    # Rupee symbol and other currency symbols that might cause issues
+    cleaned = cleaned.replace('₹', 'Rs.')
+    cleaned = cleaned.replace('€', 'EUR')
+    cleaned = cleaned.replace('£', 'GBP')
+    
+    return cleaned
+
+
 class TallyXMLParser:
     """
     Parser for Tally Prime XML export files
@@ -40,10 +76,15 @@ class TallyXMLParser:
         """Parse the XML file/content"""
         try:
             if self.file_path:
-                self.tree = ET.parse(self.file_path)
-                self.root = self.tree.getroot()
+                # Read file and clean content
+                with open(self.file_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                content = clean_xml_content(content)
+                self.root = ET.fromstring(content)
             elif self.xml_content:
-                self.root = ET.fromstring(self.xml_content)
+                # Clean the XML content before parsing
+                cleaned_content = clean_xml_content(self.xml_content)
+                self.root = ET.fromstring(cleaned_content)
             else:
                 raise ValueError("Either file_path or xml_content must be provided")
             

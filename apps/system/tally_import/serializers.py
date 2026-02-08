@@ -14,9 +14,9 @@ class TallyImportJobSerializer(serializers.ModelSerializer):
     class Meta:
         model = TallyImportJob
         fields = [
-            'id', 'company', 'file_name', 'file_size', 'status',
+            'id', 'company', 'original_filename', 'file_path', 'file_size', 'status',
             'tally_company_name', 'tally_version', 'data_types',
-            'total_records', 'processed_records', 'imported_records',
+            'total_records', 'processed_records', 'successful_records',
             'failed_records', 'skipped_records', 'error_message',
             'started_at', 'completed_at', 'created_at', 'created_by',
             'progress_percentage', 'duration'
@@ -92,15 +92,15 @@ class FileUploadSerializer(serializers.Serializer):
 class ImportPreviewSerializer(serializers.Serializer):
     """Serializer for import preview request"""
     
-    job_id = serializers.UUIDField()
-    data_type = serializers.CharField()
-    limit = serializers.IntegerField(default=10, min_value=1, max_value=100)
+    job_id = serializers.UUIDField(required=False)  # Optional - usually from URL
+    data_type = serializers.CharField(required=False)
+    limit = serializers.IntegerField(default=10, min_value=1, max_value=100, required=False)
 
 
 class ImportExecuteSerializer(serializers.Serializer):
     """Serializer for import execution request"""
     
-    job_id = serializers.UUIDField()
+    job_id = serializers.UUIDField(required=False)  # Optional - usually from URL
     data_types = serializers.ListField(
         child=serializers.CharField(),
         required=False,
@@ -108,6 +108,7 @@ class ImportExecuteSerializer(serializers.Serializer):
     )
     skip_existing = serializers.BooleanField(
         default=True,
+        required=False,
         help_text="Skip records that already exist in the system"
     )
 

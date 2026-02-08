@@ -48,6 +48,9 @@ class TallyImportJob(CompanyScopedModel):
     file_path = models.CharField(max_length=500)
     file_size = models.BigIntegerField(default=0)
     
+    # Store XML content for processing (avoids session issues)
+    xml_content = models.TextField(blank=True, help_text="Cached XML content for import processing")
+    
     # Import configuration
     data_types = models.JSONField(
         default=list,
@@ -96,6 +99,7 @@ class TallyImportJob(CompanyScopedModel):
     )
 
     class Meta:
+        db_table = 'system_tallyimportjob'
         ordering = ['-created_at']
         verbose_name = "Tally Import Job"
         verbose_name_plural = "Tally Import Jobs"
@@ -144,6 +148,7 @@ class TallyFieldMapping(CompanyScopedModel):
     )
     
     class Meta:
+        db_table = 'system_tallyfieldmapping'
         unique_together = ('company', 'name', 'data_type')
         verbose_name = "Tally Field Mapping"
         verbose_name_plural = "Tally Field Mappings"
@@ -200,6 +205,7 @@ class TallyImportRecord(BaseModel):
     source_line = models.IntegerField(null=True, blank=True)
 
     class Meta:
+        db_table = 'system_tallyimportrecord'
         ordering = ['source_line', 'created_at']
         indexes = [
             models.Index(fields=['import_job', 'status']),
@@ -234,6 +240,7 @@ class TallyMasterMapping(CompanyScopedModel):
     system_model = models.CharField(max_length=100)
     
     class Meta:
+        db_table = 'system_tallymastermapping'
         unique_together = ('company', 'data_type', 'tally_name')
         indexes = [
             models.Index(fields=['company', 'data_type', 'tally_name']),

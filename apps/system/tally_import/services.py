@@ -3,6 +3,7 @@ Tally Import Service
 Handles the actual import of mapped Tally data into the system
 """
 import uuid
+import json
 import logging
 from typing import Dict, List, Any, Optional, Tuple
 from decimal import Decimal
@@ -47,7 +48,8 @@ class TallyImportService:
         self.import_job = TallyImportJob.objects.create(
             company_id=self.company_id,
             created_by_id=self.user_id,
-            file_name=file_name,
+            original_filename=file_name,
+            file_path='',
             file_size=file_size,
             status='VALIDATING',
         )
@@ -158,7 +160,19 @@ class TallyImportService:
         data = self.mapper.mapped_data.get(data_type, [])
         return data[:limit]
     
-    @transaction.atomic
+    @staticmethod
+    def _make_json_safe(obj):
+        """Convert Decimal and other non-JSON-serializable types to safe types"""
+        if isinstance(obj, dict):
+            return {k: TallyImportService._make_json_safe(v) for k, v in obj.items()}
+        elif isinstance(obj, (list, tuple)):
+            return [TallyImportService._make_json_safe(v) for v in obj]
+        elif isinstance(obj, Decimal):
+            return str(obj)
+        elif isinstance(obj, (date, datetime)):
+            return obj.isoformat()
+        return obj
+
     def import_data(self, data_types: List[str] = None, 
                    skip_existing: bool = True) -> Dict:
         """
@@ -218,7 +232,7 @@ class TallyImportService:
             if self.import_job:
                 self.import_job.status = 'COMPLETED'
                 self.import_job.completed_at = timezone.now()
-                self.import_job.imported_records = self.results['success']
+                self.import_job.successful_records = self.results['success']
                 self.import_job.failed_records = self.results['failed']
                 self.import_job.skipped_records = self.results['skipped']
                 self.import_job.save()
@@ -271,12 +285,25 @@ class TallyImportService:
                 # Create import record
                 import_record = None
                 if self.import_job:
+                    # Map data_type key to model DataType choice value
+                    data_type_choice_map = {
+                        'ledger_groups': 'LEDGER_GROUP',
+                        'ledgers': 'LEDGER',
+                        'stock_groups': 'STOCK_GROUP',
+                        'stock_items': 'STOCK_ITEM',
+                        'stock_categories': 'STOCK_CATEGORY',
+                        'units': 'UNIT',
+                        'godowns': 'GODOWN',
+                        'vouchers': 'VOUCHER',
+                        'cost_centers': 'COST_CENTER',
+                        'cost_categories': 'COST_CATEGORY',
+                    }
                     import_record = TallyImportRecord.objects.create(
                         import_job=self.import_job,
-                        data_type=data_type.upper().replace('_', ''),
+                        data_type=data_type_choice_map.get(data_type, data_type.upper()),
                         tally_name=record.get('name', f'Record_{i}'),
-                        tally_guid=record.get('guid', ''),
-                        original_data=record,
+                        tally_id=record.get('guid', ''),
+                        source_data=self._make_json_safe(record),
                     )
                 
                 # Import the record
@@ -288,7 +315,7 @@ class TallyImportService:
                     
                     if import_record:
                         import_record.status = 'SUCCESS'
-                        import_record.system_id = result.get('system_id')
+                        import_record.created_object_id = result.get('system_id', '')
                         import_record.save()
                     
                     # Store master mapping
@@ -397,18 +424,50 @@ class TallyImportService:
         
         # Get parent group if specified
         parent_id = None
-        parent_name = record.get('parent_name')
-        if parent_name:
-            parent_id = self._get_system_id('ledger_groups', parent_name)
+        parent_name = record.get('parent_name') or record.get('parent')
+        if parent_name and parent_name.lower() not in ['', 'primary']:
+            parent = AccountGroup.objects.filter(
+                company_id=self.company_id,
+                name__iexact=parent_name
+            ).first()
+            parent_id = parent.id if parent else None
+        
+        # Map Tally nature to system nature
+        tally_nature = (record.get('nature') or record.get('is_revenue') or 'ASSET').upper()
+        nature_map = {
+            'ASSETS': 'ASSET',
+            'LIABILITIES': 'LIABILITY',
+            'INCOME': 'INCOME',
+            'EXPENSES': 'EXPENSE',
+            'EXPENSE': 'EXPENSE',
+            'CAPITAL': 'EQUITY',
+            'EQUITY': 'EQUITY',
+        }
+        nature = nature_map.get(tally_nature, 'ASSET')
+        
+        # Map nature to report type
+        report_type_map = {
+            'ASSET': 'BS',
+            'LIABILITY': 'BS',
+            'EQUITY': 'BS',
+            'INCOME': 'PL',
+            'EXPENSE': 'PL',
+        }
+        report_type = report_type_map.get(nature, 'BS')
+        
+        # Generate code from name
+        code = name.upper().replace(' ', '_')[:50]
         
         # Create new
         try:
             group = AccountGroup.objects.create(
                 company_id=self.company_id,
                 name=name,
+                code=code,
                 parent_id=parent_id,
-                nature=record.get('nature', 'ASSET'),
-                description=record.get('description', ''),
+                nature=nature,
+                report_type=report_type,
+                path=name,  # Will be updated by model if needed
             )
             return {'status': 'success', 'system_id': str(group.id)}
         except Exception as e:
@@ -416,8 +475,9 @@ class TallyImportService:
     
     def _import_ledger(self, record: Dict, skip_existing: bool) -> Dict:
         """Import a ledger (account/party)"""
-        from apps.accounting.models import Account
+        from apps.accounting.models import Ledger, AccountGroup, AccountType
         from apps.party.models import Party
+        from apps.company.models import FinancialYear
         
         name = record.get('name')
         if not name:
@@ -427,8 +487,8 @@ class TallyImportService:
         if record.get('is_party'):
             return self._import_party(record, skip_existing)
         
-        # Check if account exists
-        existing = Account.objects.filter(
+        # Check if ledger exists
+        existing = Ledger.objects.filter(
             company_id=self.company_id,
             name__iexact=name
         ).first()
@@ -444,20 +504,68 @@ class TallyImportService:
             return {'status': 'success', 'system_id': str(existing.id)}
         
         # Get account group
-        group_name = record.get('account_group')
-        group_id = self._get_system_id('ledger_groups', group_name) if group_name else None
+        group_name = record.get('account_group') or record.get('parent')
+        group = None
+        if group_name:
+            group = AccountGroup.objects.filter(
+                company_id=self.company_id,
+                name__iexact=group_name
+            ).first()
         
-        # Create new account
+        if not group:
+            # Try to find or create a default group
+            group = AccountGroup.objects.filter(
+                company_id=self.company_id
+            ).first()
+            
+        if not group:
+            return {'status': 'failed', 'error': f'Account group not found: {group_name}'}
+        
+        # Get current financial year
+        fy = FinancialYear.objects.filter(
+            company_id=self.company_id,
+            is_current=True
+        ).first()
+        
+        if not fy:
+            fy = FinancialYear.objects.filter(company_id=self.company_id).first()
+            
+        if not fy:
+            return {'status': 'failed', 'error': 'No financial year found for company'}
+        
+        # Determine account type based on group nature
+        account_type_map = {
+            'ASSET': AccountType.ASSET,
+            'LIABILITY': AccountType.LIABILITY,
+            'EQUITY': AccountType.EQUITY,
+            'INCOME': AccountType.INCOME,
+            'EXPENSE': AccountType.EXPENSE,
+        }
+        account_type = account_type_map.get(group.nature, AccountType.ASSET)
+        
+        # Generate code from name
+        code = name.upper().replace(' ', '_')[:50]
+        
+        # Ensure code is unique
+        base_code = code
+        counter = 1
+        while Ledger.objects.filter(company_id=self.company_id, code=code).exists():
+            code = f"{base_code}_{counter}"
+            counter += 1
+        
+        # Create new ledger
         try:
-            account = Account.objects.create(
+            ledger = Ledger.objects.create(
                 company_id=self.company_id,
                 name=name,
-                account_group_id=group_id,
+                code=code,
+                group=group,
+                account_type=account_type,
                 opening_balance=record.get('opening_balance', Decimal('0')),
-                is_bank_account=record.get('is_bank_account', False),
-                is_cash_account=record.get('is_cash_account', False),
+                opening_balance_fy=fy,
+                is_bill_wise=record.get('is_bill_wise', False),
             )
-            return {'status': 'success', 'system_id': str(account.id)}
+            return {'status': 'success', 'system_id': str(ledger.id)}
         except Exception as e:
             return {'status': 'failed', 'error': str(e)}
     
@@ -489,17 +597,12 @@ class TallyImportService:
                 company_id=self.company_id,
                 name=name,
                 party_type=record.get('party_type', 'CUSTOMER'),
-                gstin=record.get('gstin'),
-                pan=record.get('pan'),
-                address=record.get('address'),
-                state=record.get('state'),
-                country=record.get('country', 'India'),
-                pincode=record.get('pincode'),
-                email=record.get('email'),
-                phone=record.get('phone') or record.get('mobile'),
-                credit_period=record.get('credit_period'),
-                credit_limit=record.get('credit_limit'),
-                opening_balance=record.get('opening_balance', Decimal('0')),
+                gstin=record.get('gstin') or '',
+                pan=record.get('pan') or '',
+                email=record.get('email') or '',
+                phone=record.get('phone') or record.get('mobile') or '',
+                credit_days=record.get('credit_period') or record.get('credit_days') or 0,
+                credit_limit=record.get('credit_limit') or Decimal('0'),
             )
             return {'status': 'success', 'system_id': str(party.id)}
         except Exception as e:
@@ -510,13 +613,10 @@ class TallyImportService:
         field_map = {
             'gstin': 'gstin',
             'pan': 'pan',
-            'address': 'address',
-            'state': 'state',
-            'country': 'country',
-            'pincode': 'pincode',
             'email': 'email',
             'phone': 'phone',
-            'credit_period': 'credit_period',
+            'credit_period': 'credit_days',
+            'credit_days': 'credit_days',
             'credit_limit': 'credit_limit',
         }
         for record_field, party_field in field_map.items():

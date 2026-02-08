@@ -1,5 +1,5 @@
 """
-API Views for Tally Import
+API Views for Tally Import - v2
 """
 import os
 import tempfile
@@ -97,8 +97,25 @@ class TallyImportViewSet(viewsets.ModelViewSet):
             )
         
         try:
-            # Read file content
-            xml_content = uploaded_file.read().decode('utf-8')
+            # Read file content - try multiple encodings (Tally uses UTF-16 with BOM)
+            file_bytes = uploaded_file.read()
+            xml_content = None
+            
+            # Try different encodings that Tally might use
+            encodings = ['utf-16', 'utf-16-le', 'utf-16-be', 'utf-8-sig', 'utf-8', 'latin-1']
+            for encoding in encodings:
+                try:
+                    xml_content = file_bytes.decode(encoding)
+                    logger.info(f"Successfully decoded file with {encoding} encoding")
+                    break
+                except (UnicodeDecodeError, UnicodeError):
+                    continue
+            
+            if xml_content is None:
+                return Response(
+                    {'error': 'Unable to decode file. Please ensure it is a valid Tally XML export.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
             
             # Create import service
             service = TallyImportService(
@@ -124,11 +141,9 @@ class TallyImportViewSet(viewsets.ModelViewSet):
             # Validate the data
             validation_result = service.validate_data()
             
-            # Store parsed data in cache/session for later use
-            # In production, you might want to store this in Redis or the database
-            request.session[f'tally_import_{job.id}'] = {
-                'xml_content': xml_content,
-            }
+            # Store XML content in the job for later use (more reliable than sessions)
+            job.xml_content = xml_content
+            job.save(update_fields=['xml_content'])
             
             return Response({
                 'job_id': str(job.id),
@@ -169,9 +184,8 @@ class TallyImportViewSet(viewsets.ModelViewSet):
         data_type = request.query_params.get('data_type', 'ledgers')
         limit = int(request.query_params.get('limit', 10))
         
-        # Get cached data
-        cached_data = request.session.get(f'tally_import_{pk}')
-        if not cached_data:
+        # Get XML content from job (stored in database)
+        if not job.xml_content:
             return Response(
                 {'error': 'Import data not found. Please re-upload the file.'},
                 status=status.HTTP_400_BAD_REQUEST
@@ -180,7 +194,7 @@ class TallyImportViewSet(viewsets.ModelViewSet):
         try:
             # Re-parse and get preview
             service = TallyImportService(company_id=company_id)
-            service.parse_file(xml_content=cached_data['xml_content'])
+            service.parse_file(xml_content=job.xml_content)
             service.validate_data()
             
             preview = service.preview_data(data_type, limit)
@@ -232,9 +246,8 @@ class TallyImportViewSet(viewsets.ModelViewSet):
         data_types = serializer.validated_data.get('data_types')
         skip_existing = serializer.validated_data.get('skip_existing', True)
         
-        # Get cached data
-        cached_data = request.session.get(f'tally_import_{pk}')
-        if not cached_data:
+        # Get XML content from job (stored in database)
+        if not job.xml_content:
             return Response(
                 {'error': 'Import data not found. Please re-upload the file.'},
                 status=status.HTTP_400_BAD_REQUEST
@@ -249,11 +262,12 @@ class TallyImportViewSet(viewsets.ModelViewSet):
             service.import_job = job
             
             # Parse and import
-            service.parse_file(xml_content=cached_data['xml_content'])
+            service.parse_file(xml_content=job.xml_content)
             result = service.import_data(data_types, skip_existing)
             
-            # Clear cached data
-            del request.session[f'tally_import_{pk}']
+            # Clear XML content after successful import to save storage
+            job.xml_content = ''
+            job.save(update_fields=['xml_content'])
             
             return Response(result)
             
