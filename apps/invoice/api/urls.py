@@ -8,7 +8,8 @@ from apps.invoice.api.views import (
     InvoicePostingView,
     InvoiceOutstandingView,
     InvoiceListView,
-    InvoiceDetailView
+    InvoiceDetailView,
+    InvoiceDownloadView
 )
 
 urlpatterns = [
@@ -24,4 +25,7 @@ urlpatterns = [
     # List and detail
     path('', InvoiceListView.as_view(), name='invoice-list'),
     path('<uuid:invoice_id>/', InvoiceDetailView.as_view(), name='invoice-detail'),
+    
+    # Download PDF
+    path('<uuid:invoice_id>/download/', InvoiceDownloadView.as_view(), name='invoice-download'),
 ]

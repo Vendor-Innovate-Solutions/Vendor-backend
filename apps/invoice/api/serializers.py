@@ -43,19 +43,20 @@ class InvoiceSerializer(serializers.ModelSerializer):
             'sales_order', 'sales_order_number',
             'purchase_order', 'purchase_order_number',
             'voucher', 'voucher_number',
-            'total_value', 'amount_received', 'outstanding_amount',
-            'shipping_address', 'billing_address',
+            'subtotal', 'tax_amount', 'grand_total',
+            'amount_received', 'outstanding_amount',
             'notes', 'lines',
             'created_at', 'updated_at'
         ]
         read_only_fields = [
             'id', 'invoice_number', 'company', 'voucher',
-            'total_value', 'amount_received', 'created_at', 'updated_at'
+            'subtotal', 'tax_amount', 'grand_total',
+            'amount_received', 'created_at', 'updated_at'
         ]
     
     def get_outstanding_amount(self, obj):
         """Calculate outstanding amount (total - received)."""
-        return obj.total_value - obj.amount_received
+        return obj.grand_total - obj.amount_received
 
 
 class InvoiceListSerializer(serializers.ModelSerializer):
@@ -70,13 +71,13 @@ class InvoiceListSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'invoice_number', 'invoice_date', 'due_date',
             'party_name', 'invoice_type', 'status',
-            'currency_code', 'total_value', 'amount_received',
-            'outstanding_amount', 'created_at'
+            'currency_code', 'subtotal', 'tax_amount', 'grand_total',
+            'amount_received', 'outstanding_amount', 'created_at'
         ]
     
     def get_outstanding_amount(self, obj):
         """Calculate outstanding amount (total - received)."""
-        return obj.total_value - obj.amount_received
+        return obj.grand_total - obj.amount_received
 
 
 class CreateInvoiceFromOrderSerializer(serializers.Serializer):

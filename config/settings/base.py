@@ -44,6 +44,7 @@ INSTALLED_APPS = [
     'apps.logistics',
     'apps.reporting',
     'apps.system',
+    'apps.system.tally_import',
     'apps.hr',
     'apps.portal',
     'apps.pricing',
@@ -115,6 +116,10 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 STATIC_URL = 'static/'
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
+
+# Media files (User uploaded files)
+MEDIA_URL = 'media/'
+MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'

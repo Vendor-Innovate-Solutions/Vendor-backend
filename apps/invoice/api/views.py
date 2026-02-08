@@ -251,3 +251,148 @@ class InvoiceDetailView(APIView):
                 {'error': 'Invoice not found'},
                 status=status.HTTP_404_NOT_FOUND
             )
+
+
+class InvoiceDownloadView(APIView):
+    """
+    Download invoice as PDF.
+    
+    GET: Download invoice PDF
+    """
+    
+    def get(self, request, invoice_id):
+        """Generate and download invoice PDF."""
+        from django.http import HttpResponse
+        from reportlab.lib.pagesizes import letter, A4
+        from reportlab.lib import colors
+        from reportlab.lib.units import inch
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.enums import TA_CENTER, TA_RIGHT
+        from io import BytesIO
+        
+        company = request.company
+        
+        try:
+            invoice = get_invoice(company, invoice_id)
+            
+            # Create PDF buffer
+            buffer = BytesIO()
+            
+            # Create PDF document
+            doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
+            
+            # Container for PDF elements
+            elements = []
+            styles = getSampleStyleSheet()
+            
+            # Custom styles
+            title_style = ParagraphStyle(
+                'CustomTitle',
+                parent=styles['Heading1'],
+                fontSize=24,
+                textColor=colors.HexColor('#1a202c'),
+                spaceAfter=30,
+                alignment=TA_CENTER
+            )
+            
+            # Company header
+            elements.append(Paragraph(f"<b>{company.name}</b>", title_style))
+            if company.address:
+                elements.append(Paragraph(f"{company.address}", styles['Normal']))
+            if hasattr(company, 'gstin') and company.gstin:
+                elements.append(Paragraph(f"GSTIN: {company.gstin}", styles['Normal']))
+            elements.append(Spacer(1, 0.3*inch))
+            
+            # Invoice title
+            invoice_title = ParagraphStyle('InvoiceTitle', parent=styles['Heading2'], alignment=TA_CENTER)
+            elements.append(Paragraph(f"<b>INVOICE: {invoice.invoice_number}</b>", invoice_title))
+            elements.append(Spacer(1, 0.2*inch))
+            
+            # Invoice details table
+            details_data = [
+                ['Invoice Date:', invoice.invoice_date.strftime('%d-%m-%Y'), 'Due Date:', (invoice.due_date or invoice.invoice_date).strftime('%d-%m-%Y')],
+                ['Party:', invoice.party.name if invoice.party else 'N/A', 'Status:', invoice.status],
+            ]
+            details_table = Table(details_data, colWidths=[1.5*inch, 2*inch, 1.5*inch, 2*inch])
+            details_table.setStyle(TableStyle([
+                ('FONTNAME', (0,0), (0,-1), 'Helvetica-Bold'),
+                ('FONTNAME', (2,0), (2,-1), 'Helvetica-Bold'),
+                ('FONTSIZE', (0,0), (-1,-1), 10),
+                ('TEXTCOLOR', (0,0), (-1,-1), colors.HexColor('#374151')),
+                ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+            ]))
+            elements.append(details_table)
+            elements.append(Spacer(1, 0.3*inch))
+            
+            # Line items table
+            line_items_data = [['#', 'Product', 'Quantity', 'Rate', 'Tax', 'Amount']]
+            
+            for idx, line in enumerate(invoice.lines.all(), 1):
+                line_items_data.append([
+                    str(idx),
+                    line.product.name if line.product else line.description or 'N/A',
+                    f"{line.quantity:.2f}",
+                    f"₹{line.rate:.2f}",
+                    f"₹{line.tax_amount:.2f}",
+                    f"₹{line.amount:.2f}"
+                ])
+            
+            # Add totals
+            line_items_data.append(['', '', '', '', 'Subtotal:', f"₹{invoice.taxable_value:.2f}"])
+            if invoice.cgst_amount > 0:
+                line_items_data.append(['', '', '', '', 'CGST:', f"₹{invoice.cgst_amount:.2f}"])
+            if invoice.sgst_amount > 0:
+                line_items_data.append(['', '', '', '', 'SGST:', f"₹{invoice.sgst_amount:.2f}"])
+            if invoice.igst_amount > 0:
+                line_items_data.append(['', '', '', '', 'IGST:', f"₹{invoice.igst_amount:.2f}"])
+            line_items_data.append(['', '', '', '', 'Total:', f"₹{invoice.invoice_amount:.2f}"])
+            
+            line_items_table = Table(line_items_data, colWidths=[0.4*inch, 2.5*inch, 1*inch, 1*inch, 1*inch, 1.2*inch])
+            line_items_table.setStyle(TableStyle([
+                # Header row
+                ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#3b82f6')),
+                ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
+                ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0,0), (-1,0), 11),
+                ('ALIGN', (0,0), (-1,0), 'CENTER'),
+                # Data rows
+                ('FONTNAME', (0,1), (-1,-6), 'Helvetica'),
+                ('FONTSIZE', (0,1), (-1,-1), 9),
+                ('ALIGN', (2,1), (-1,-1), 'RIGHT'),
+                ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+                # Grid
+                ('GRID', (0,0), (-1,-6), 1, colors.HexColor('#d1d5db')),
+                ('LINEBELOW', (0,-5), (-1,-1), 0.5, colors.HexColor('#d1d5db')),
+                # Totals section
+                ('FONTNAME', (4,-5), (-1,-1), 'Helvetica-Bold'),
+                ('BACKGROUND', (4,-1), (-1,-1), colors.HexColor('#f3f4f6')),
+                ('TOPPADDING', (0,1), (-1,-1), 6),
+                ('BOTTOMPADDING', (0,1), (-1,-1), 6),
+            ]))
+            elements.append(line_items_table)
+            
+            # Build PDF
+            doc.build(elements)
+            
+            # Get PDF value
+            pdf = buffer.getvalue()
+            buffer.close()
+            
+            # Return PDF response
+            response = HttpResponse(content_type='application/pdf')
+            response['Content-Disposition'] = f'attachment; filename="invoice_{invoice.invoice_number}.pdf"'
+            response.write(pdf)
+            return response
+            
+        except Invoice.DoesNotExist:
+            return Response(
+                {'error': 'Invoice not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to generate PDF: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

@@ -30,6 +30,12 @@ from apps.company.api.views_connection import (
     JoinByCompanyCodeView,
     RetailerCompanyListView
 )
+from apps.company.api.views_settings import (
+    CompanySettingsView,
+    CompanyModulesView,
+    CompanyBrandingView,
+    CompanyGSTView
+)
 
 urlpatterns = [
     # Onboarding APIs
@@ -62,4 +68,10 @@ urlpatterns = [
     path('financial_year/', FinancialYearListView.as_view(), name='financial-year-list'),
     path('financial_year/<uuid:fy_id>/close/', FinancialYearCloseView.as_view(), name='financial-year-close'),
     path('financial_year/<uuid:fy_id>/reopen/', FinancialYearReopenView.as_view(), name='financial-year-reopen'),
+    
+    # Company Settings - Consolidated APIs
+    path('settings/', CompanySettingsView.as_view(), name='company-settings'),
+    path('settings/modules/', CompanyModulesView.as_view(), name='company-modules'),
+    path('settings/branding/', CompanyBrandingView.as_view(), name='company-branding'),
+    path('settings/gst/', CompanyGSTView.as_view(), name='company-gst'),
 ]

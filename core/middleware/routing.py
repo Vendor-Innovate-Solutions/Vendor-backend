@@ -94,15 +94,16 @@ class PostLoginRoutingMiddleware(MiddlewareMixin):
         
         if should_redirect:
             # Return JSON response with redirect information
-            # Use JsonResponse instead of DRF Response to avoid rendering issues
+            # Use 403 Forbidden instead of 307 to prevent browser auto-redirect
+            # The frontend should check for the REDIRECT_REQUIRED error and handle routing
             response_data = {
                 'error': 'REDIRECT_REQUIRED',
-                'status_code': 307,
+                'status_code': 403,
                 **error_data
             }
             
-            response = JsonResponse(response_data, status=307)
-            response['Location'] = redirect_path
+            response = JsonResponse(response_data, status=403)
+            response['X-Redirect-To'] = redirect_path  # Use custom header instead of Location
             return response
         
         return None

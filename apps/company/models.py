@@ -47,6 +47,30 @@ class Company(BaseModel):
         choices=CompanyType.choices,
         default=CompanyType.PRIVATE_LIMITED
     )
+    
+    # Contact Information
+    phone = models.CharField(max_length=20, blank=True, null=True)
+    email = models.EmailField(blank=True, null=True)
+    website = models.URLField(blank=True, null=True)
+    
+    # Address
+    address_line1 = models.CharField(max_length=255, blank=True, null=True)
+    address_line2 = models.CharField(max_length=255, blank=True, null=True)
+    city = models.CharField(max_length=100, blank=True, null=True)
+    state = models.CharField(max_length=100, blank=True, null=True)
+    country = models.CharField(max_length=100, default='India', blank=True, null=True)
+    pincode = models.CharField(max_length=20, blank=True, null=True)
+    
+    # Tax Information
+    gstin = models.CharField(max_length=15, blank=True, null=True, verbose_name='GSTIN')
+    pan = models.CharField(max_length=10, blank=True, null=True, verbose_name='PAN')
+    
+    # Branding
+    logo = models.ImageField(upload_to='company_logos/', blank=True, null=True)
+    invoice_footer = models.TextField(blank=True, null=True, help_text='Footer text to display on invoices')
+    invoice_terms = models.TextField(blank=True, null=True, help_text='Terms and conditions for invoices')
+    
+    # System Settings
     timezone = models.CharField(max_length=50, default='UTC')
     language = models.CharField(max_length=20, default='en')
     base_currency = models.ForeignKey(

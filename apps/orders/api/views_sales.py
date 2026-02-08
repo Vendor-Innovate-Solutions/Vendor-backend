@@ -360,3 +360,85 @@ class SalesOrderCancelView(APIView):
                 {'error': str(e)},
                 status=status.HTTP_400_BAD_REQUEST
             )
+
+class SalesOrderDispatchView(APIView):
+    """
+    Dispatch an order (mark as shipped) and auto-generate invoice.
+    
+    POST /api/orders/sales/<order_id>/dispatch/
+    
+    This endpoint:
+    1. Validates order is in CONFIRMED status with employee assigned
+    2. Updates order status to IN_PROGRESS (shipped)
+    3. Auto-generates invoice in DRAFT status
+    4. Returns the order and invoice details
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request, order_id):
+        """Dispatch order and generate invoice."""
+        from apps.invoice.services.invoice_generation_service import InvoiceGenerationService
+        from apps.invoice.api.serializers import InvoiceSerializer
+        
+        company = request.company
+        
+        try:
+            order = SalesOrder.objects.get(company=company, id=order_id)
+        except SalesOrder.DoesNotExist:
+            return Response(
+                {'error': 'Sales order not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Validate order can be dispatched
+        if order.status != 'CONFIRMED':
+            return Response(
+                {'error': f'Cannot dispatch order in {order.status} status. Order must be CONFIRMED.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Optional: Check if employee is assigned
+        if not order.assigned_employee:
+            return Response(
+                {'error': 'Order must have an employee assigned before dispatch'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            # Update order status to IN_PROGRESS (shipped)
+            order.status = 'IN_PROGRESS'
+            order.save(update_fields=['status', 'updated_at'])
+            
+            # Auto-generate invoice
+            invoice = InvoiceGenerationService.generate_from_sales_order(
+                sales_order=order,
+                created_by=request.user,
+                partial_allowed=False,
+                apply_gst=True,
+                company_state_code=getattr(company, 'state_code', '')
+            )
+            
+            # Calculate totals for invoice
+            invoice.subtotal = sum(line.line_total for line in invoice.lines.all())
+            invoice.grand_total = invoice.subtotal + invoice.tax_amount
+            invoice.save(update_fields=['subtotal', 'grand_total'])
+            
+            order_serializer = SalesOrderSerializer(order)
+            invoice_serializer = InvoiceSerializer(invoice)
+            
+            return Response({
+                'message': 'Order dispatched and invoice generated successfully',
+                'order': order_serializer.data,
+                'invoice': invoice_serializer.data
+            })
+            
+        except DjangoValidationError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to dispatch order: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

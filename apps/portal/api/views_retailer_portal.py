@@ -509,3 +509,197 @@ class RetailerOrderListView(APIView):
             })
         
         return Response(data)
+
+class RetailerInvoiceListView(APIView):
+    """
+    Get list of invoices for retailer.
+    
+    GET /portal/my-invoices/
+    
+    Query Parameters:
+        - company_id: Filter by company
+        - status: Filter by status (DRAFT, POSTED, PAID, etc.)
+    
+    Response:
+    [
+        {
+            "id": "uuid",
+            "invoice_number": "INV-000001",
+            "company_name": "ABC Manufacturing",
+            "status": "POSTED",
+            "invoice_date": "2026-02-01",
+            "due_date": "2026-02-15",
+            "subtotal": "10000.00",
+            "tax_amount": "1800.00",
+            "grand_total": "11800.00",
+            "amount_received": "0.00",
+            "outstanding_amount": "11800.00"
+        }
+    ]
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        """List retailer's invoices."""
+        from apps.invoice.models import Invoice
+        
+        user = request.user
+        
+        # Get retailer profile
+        try:
+            retailer = RetailerUser.objects.get(user=user)
+            party = retailer.party
+        except RetailerUser.DoesNotExist:
+            return Response([], status=status.HTTP_200_OK)
+        
+        if not party:
+            return Response([], status=status.HTTP_200_OK)
+        
+        # Get invoices for this party
+        invoices = Invoice.objects.filter(
+            party=party
+        ).select_related('company', 'currency').order_by('-invoice_date', '-created_at')
+        
+        # Filter by company
+        company_id = request.query_params.get('company_id')
+        if company_id:
+            invoices = invoices.filter(company_id=company_id)
+        
+        # Filter by status
+        invoice_status = request.query_params.get('status')
+        if invoice_status:
+            invoices = invoices.filter(status=invoice_status.upper())
+        
+        data = []
+        for invoice in invoices:
+            outstanding = invoice.grand_total - invoice.amount_received
+            
+            data.append({
+                "id": str(invoice.id),
+                "invoice_number": invoice.invoice_number,
+                "company_name": invoice.company.name,
+                "company_id": str(invoice.company.id),
+                "status": invoice.status,
+                "invoice_date": invoice.invoice_date.isoformat(),
+                "due_date": invoice.due_date.isoformat() if invoice.due_date else None,
+                "subtotal": str(invoice.subtotal),
+                "tax_amount": str(invoice.tax_amount),
+                "grand_total": str(invoice.grand_total),
+                "amount_received": str(invoice.amount_received),
+                "outstanding_amount": str(outstanding),
+                "order_number": invoice.sales_order.order_number if invoice.sales_order else None,
+                "created_at": invoice.created_at.isoformat()
+            })
+        
+        return Response(data)
+
+
+class RetailerInvoiceDetailView(APIView):
+    """
+    API endpoint for retailers to view a specific invoice with line items.
+    GET /portal/my-invoices/<invoice_id>/
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request, invoice_id):
+        """Get invoice detail with line items."""
+        from apps.invoice.models import Invoice, InvoiceLine
+        
+        user = request.user
+        
+        # Get retailer profile
+        try:
+            retailer = RetailerUser.objects.get(user=user)
+            party = retailer.party
+        except RetailerUser.DoesNotExist:
+            return Response({"error": "Retailer profile not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        if not party:
+            return Response({"error": "Party not linked"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Get the invoice
+        try:
+            invoice = Invoice.objects.select_related(
+                'company', 'party', 'currency', 'sales_order'
+            ).get(id=invoice_id, party=party)
+        except Invoice.DoesNotExist:
+            return Response({"error": "Invoice not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Get line items - use correct field names: 'item' and 'uom'
+        lines = InvoiceLine.objects.filter(invoice=invoice).select_related('item', 'uom')
+        
+        line_items = []
+        for line in lines:
+            # Get product name from StockItem
+            product_name = line.item.name if line.item else line.description
+            hsn_code = line.item.hsn_code if line.item and hasattr(line.item, 'hsn_code') else None
+            
+            line_items.append({
+                "id": str(line.id),
+                "product_name": product_name,
+                "description": line.description or product_name,
+                "hsn_code": hsn_code,
+                "quantity": str(line.quantity),
+                "unit": line.uom.name if line.uom else None,
+                "unit_rate": str(line.unit_rate),
+                "discount_percent": str(line.discount_pct),
+                "discount_amount": "0.00",  # Calculate if needed
+                "taxable_value": str(line.line_total),  # Line total before tax
+                "cgst_rate": "0",
+                "cgst_amount": "0",
+                "sgst_rate": "0",
+                "sgst_amount": "0",
+                "igst_rate": "0",
+                "igst_amount": "0",
+                "tax_amount": str(line.tax_amount),
+                "line_total": str(line.line_total + line.tax_amount),
+            })
+        
+        outstanding = invoice.grand_total - invoice.amount_received
+        
+        data = {
+            "id": str(invoice.id),
+            "invoice_number": invoice.invoice_number,
+            "invoice_type": invoice.invoice_type,
+            "status": invoice.status,
+            "invoice_date": invoice.invoice_date.isoformat(),
+            "due_date": invoice.due_date.isoformat() if invoice.due_date else None,
+            
+            # Company details
+            "company": {
+                "id": str(invoice.company.id),
+                "name": invoice.company.name,
+                "gstin": invoice.company.gstin if hasattr(invoice.company, 'gstin') else None,
+                "address": invoice.company.address if hasattr(invoice.company, 'address') else None,
+            },
+            
+            # Party details
+            "party": {
+                "id": str(invoice.party.id),
+                "name": invoice.party.name,
+                "gstin": invoice.party.gstin if hasattr(invoice.party, 'gstin') else None,
+                "address": invoice.party.address if hasattr(invoice.party, 'address') else None,
+            },
+            
+            # Line items
+            "items": line_items,
+            
+            # Totals
+            "subtotal": str(invoice.subtotal),
+            "discount_total": str(invoice.discount_total) if hasattr(invoice, 'discount_total') else "0.00",
+            "tax_amount": str(invoice.tax_amount),
+            "grand_total": str(invoice.grand_total),
+            "amount_received": str(invoice.amount_received),
+            "outstanding_amount": str(outstanding),
+            
+            # Order reference
+            "sales_order": {
+                "id": str(invoice.sales_order.id),
+                "order_number": invoice.sales_order.order_number,
+            } if invoice.sales_order else None,
+            
+            "notes": invoice.notes if hasattr(invoice, 'notes') else None,
+            "created_at": invoice.created_at.isoformat(),
+        }
+        
+        return Response(data)

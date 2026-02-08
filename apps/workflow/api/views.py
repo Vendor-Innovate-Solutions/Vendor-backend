@@ -54,7 +54,7 @@ class AvailableEmployeesView(APIView):
         employee_list = [{
             'id': str(emp.id),
             'employee_code': emp.employee_code,
-            'name': emp.name,
+            'name': f"{emp.first_name} {emp.last_name}",
             'designation': emp.designation,
             'department': emp.department.name if emp.department else None
         } for emp in employees]
@@ -113,7 +113,7 @@ class AssignOrderToEmployeeView(APIView):
                 'message': 'Order assigned successfully',
                 'order_id': str(order_id),
                 'employee_id': str(employee_id),
-                'employee_name': employee.name
+                'employee_name': f"{employee.first_name} {employee.last_name}"
             })
             
         except SalesOrder.DoesNotExist:

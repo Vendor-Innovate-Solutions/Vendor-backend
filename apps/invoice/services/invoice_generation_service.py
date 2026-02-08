@@ -92,9 +92,9 @@ class InvoiceGenerationService:
         if sales_order.status == "POSTED":
             raise AlreadyPosted("Sales order already posted")
 
-        if sales_order.status not in ("CONFIRMED", "PARTIAL_INVOICED"):
+        if sales_order.status not in ("CONFIRMED", "PARTIAL_INVOICED", "IN_PROGRESS"):
             raise ValidationError(
-                "Sales order must be CONFIRMED or PARTIAL_INVOICED before invoicing"
+                "Sales order must be CONFIRMED, IN_PROGRESS, or PARTIAL_INVOICED before invoicing"
             )
 
         if not sales_order.items.exists():

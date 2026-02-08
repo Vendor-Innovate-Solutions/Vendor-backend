@@ -28,15 +28,29 @@ class CompanySerializer(serializers.ModelSerializer):
     """Serializer for Company model"""
     base_currency_code = serializers.CharField(source='base_currency.code', read_only=True)
     base_currency_name = serializers.CharField(source='base_currency.name', read_only=True)
+    logo_url = serializers.SerializerMethodField()
     
     class Meta:
         model = Company
         fields = [
             'id', 'code', 'name', 'legal_name', 'company_type',
+            'phone', 'email', 'website',
+            'address_line1', 'address_line2', 'city', 'state', 'country', 'pincode',
+            'gstin', 'pan',
+            'logo', 'logo_url', 'invoice_footer', 'invoice_terms',
             'timezone', 'language', 'base_currency', 'base_currency_code',
             'base_currency_name', 'is_active', 'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at', 'logo_url']
+    
+    def get_logo_url(self, obj):
+        """Get full URL for logo"""
+        if obj.logo:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.logo.url)
+            return obj.logo.url
+        return None
 
 
 class CompanyCreateSerializer(serializers.ModelSerializer):

@@ -12,7 +12,7 @@ from apps.voucher.models import Payment, PaymentLine, Voucher, VoucherType
 from apps.invoice.models import Invoice
 from apps.party.models import Party
 from apps.accounting.models import Ledger
-from apps.company.models import Company, Sequence
+from apps.company.models import Company, Sequence, FinancialYear
 
 
 class PaymentService:
@@ -67,18 +67,21 @@ class PaymentService:
             company=company,
             key=f'VOUCHER_{payment_type}'
         )
-        voucher_number = f"{payment_type[:3]}-{sequence.next_value:05d}"
-        sequence.next_value += 1
+        sequence.last_value += 1
+        voucher_number = f"{payment_type[:3]}-{sequence.last_value:05d}"
         sequence.save()
+        
+        # Get current financial year
+        financial_year = FinancialYear.objects.get(company=company, is_current=True)
         
         # Create voucher
         voucher = Voucher.objects.create(
             company=company,
             voucher_type=voucher_type,
+            financial_year=financial_year,
             voucher_number=voucher_number,
             date=payment_date or timezone.now().date(),
-            status='DRAFT',
-            created_by=created_by
+            status='DRAFT'
         )
         
         # Create payment

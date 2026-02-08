@@ -13,9 +13,9 @@ class AccountGroupSerializer(serializers.ModelSerializer):
         model = AccountGroup
         fields = [
             'id', 'name', 'code', 'parent', 'nature',
-            'report_type', 'path', 'created_at', 'last_updated_at'
+            'report_type', 'path', 'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'created_at', 'last_updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at']
 
 
 class LedgerSerializer(serializers.ModelSerializer):
@@ -27,11 +27,11 @@ class LedgerSerializer(serializers.ModelSerializer):
     class Meta:
         model = Ledger
         fields = [
-            'id', 'name', 'group', 'group_name', 'group_nature',
-            'opening_balance', 'opening_balance_type', 'is_active',
-            'created_at', 'last_updated_at'
+            'id', 'code', 'name', 'group', 'group_name', 'group_nature',
+            'opening_balance', 'opening_balance_type', 'opening_balance_fy',
+            'is_active', 'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'created_at', 'last_updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at']
 
 
 class LedgerDetailSerializer(serializers.ModelSerializer):
@@ -42,11 +42,11 @@ class LedgerDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = Ledger
         fields = [
-            'id', 'name', 'group', 'opening_balance',
+            'id', 'code', 'name', 'group', 'opening_balance',
             'opening_balance_type', 'is_active',
-            'created_at', 'last_updated_at'
+            'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'created_at', 'last_updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at']
 
 
 class FinancialYearSerializer(serializers.ModelSerializer):
@@ -56,9 +56,9 @@ class FinancialYearSerializer(serializers.ModelSerializer):
         model = FinancialYear
         fields = [
             'id', 'name', 'start_date', 'end_date',
-            'is_closed', 'created_at', 'last_updated_at'
+            'is_closed', 'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'created_at', 'last_updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at']
 
 
 class LedgerBalanceSerializer(serializers.ModelSerializer):
@@ -76,9 +76,9 @@ class LedgerBalanceSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'ledger', 'ledger_name', 'financial_year',
             'financial_year_name', 'opening_balance', 'balance',
-            'balance_dr', 'balance_cr', 'last_updated_at'
+            'balance_dr', 'balance_cr', 'updated_at'
         ]
-        read_only_fields = ['id', 'last_updated_at']
+        read_only_fields = ['id', 'updated_at']
     
     def get_balance_dr(self, obj):
         """Return debit balance or 0."""

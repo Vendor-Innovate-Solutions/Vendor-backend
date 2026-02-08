@@ -321,3 +321,189 @@ class OrderItem(CompanyScopedModel):
         order_type = "SO" if self.sales_order else "PO"
         return f"{order_type}-{order.order_number} Line {self.line_no}: {self.item.sku}"
 
+
+class CreditNoteStatus(models.TextChoices):
+    """Enum for credit note status"""
+    DRAFT = 'DRAFT', 'Draft'
+    APPROVED = 'APPROVED', 'Approved'
+    APPLIED = 'APPLIED', 'Applied'
+    CANCELLED = 'CANCELLED', 'Cancelled'
+
+
+class CreditNote(CompanyScopedModel):
+    """
+    Credit note for sales returns or adjustments.
+    Can be created against an invoice or as a general credit.
+    """
+    credit_note_number = models.CharField(max_length=50, unique=True, db_index=True)
+    credit_note_date = models.DateField()
+    party = models.ForeignKey(
+        "party.Party",
+        on_delete=models.PROTECT,
+        related_name='credit_notes'
+    )
+    reference_invoice = models.ForeignKey(
+        "invoice.Invoice",
+        on_delete=models.PROTECT,
+        related_name='credit_notes',
+        null=True,
+        blank=True,
+        help_text="Invoice against which this credit note is issued"
+    )
+    reference_type = models.CharField(
+        max_length=20,
+        choices=[('INVOICE', 'Against Invoice'), ('GENERAL', 'General Credit')],
+        default='INVOICE'
+    )
+    reason = models.TextField(help_text='Reason for credit note')
+    status = models.CharField(
+        max_length=20,
+        choices=CreditNoteStatus.choices,
+        default=CreditNoteStatus.DRAFT
+    )
+    
+    # Totals
+    subtotal = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    tax_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    total_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    
+    notes = models.TextField(blank=True, null=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='created_credit_notes'
+    )
+
+    class Meta:
+        verbose_name = "Credit Note"
+        verbose_name_plural = "Credit Notes"
+        ordering = ['-credit_note_date', '-created_at']
+        indexes = [
+            models.Index(fields=['company', 'status']),
+            models.Index(fields=['company', 'credit_note_date']),
+            models.Index(fields=['party', 'status']),
+        ]
+
+    def __str__(self):
+        return f"{self.credit_note_number} - {self.party.name}"
+
+
+class CreditNoteLine(BaseModel):
+    """
+    Line items for credit notes.
+    """
+    credit_note = models.ForeignKey(
+        CreditNote,
+        on_delete=models.CASCADE,
+        related_name='lines'
+    )
+    line_no = models.PositiveSmallIntegerField()
+    product = models.ForeignKey(
+        "products.Product",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True
+    )
+    description = models.CharField(max_length=500)
+    quantity = models.DecimalField(max_digits=12, decimal_places=3)
+    unit_rate = models.DecimalField(max_digits=15, decimal_places=2)
+    taxable_value = models.DecimalField(max_digits=15, decimal_places=2)
+    
+    # GST breakdown
+    cgst_rate = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    cgst_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    sgst_rate = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    sgst_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    igst_rate = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    igst_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    
+    line_total = models.DecimalField(max_digits=15, decimal_places=2)
+
+    class Meta:
+        verbose_name = "Credit Note Line"
+        verbose_name_plural = "Credit Note Lines"
+        ordering = ['line_no']
+        unique_together = [('credit_note', 'line_no')]
+
+    def __str__(self):
+        return f"{self.credit_note.credit_note_number} Line {self.line_no}"
+
+
+class PriceListType(models.TextChoices):
+    """Enum for price list types"""
+    STANDARD = 'STANDARD', 'Standard Price'
+    WHOLESALE = 'WHOLESALE', 'Wholesale'
+    RETAIL = 'RETAIL', 'Retail'
+    SPECIAL = 'SPECIAL', 'Special Offer'
+
+
+class PriceList(CompanyScopedModel):
+    """
+    Price list for products.
+    Can have different price lists for wholesale, retail, special offers, etc.
+    """
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    price_list_type = models.CharField(
+        max_length=20,
+        choices=PriceListType.choices,
+        default=PriceListType.STANDARD
+    )
+    is_active = models.BooleanField(default=True)
+    valid_from = models.DateField(null=True, blank=True)
+    valid_to = models.DateField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = "Price List"
+        verbose_name_plural = "Price Lists"
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['company', 'is_active']),
+            models.Index(fields=['company', 'price_list_type']),
+        ]
+
+    def __str__(self):
+        return f"{self.name} ({self.price_list_type})"
+
+
+class PriceListItem(BaseModel):
+    """
+    Individual product prices in a price list.
+    Supports tiered pricing based on minimum quantity.
+    """
+    price_list = models.ForeignKey(
+        PriceList,
+        on_delete=models.CASCADE,
+        related_name='items'
+    )
+    product = models.ForeignKey(
+        "products.Product",
+        on_delete=models.CASCADE,
+        related_name='price_list_items'
+    )
+    unit_price = models.DecimalField(max_digits=15, decimal_places=2)
+    min_quantity = models.DecimalField(
+        max_digits=12,
+        decimal_places=3,
+        default=1,
+        help_text='Minimum quantity for this price'
+    )
+    discount_percent = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=0
+    )
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        verbose_name = "Price List Item"
+        verbose_name_plural = "Price List Items"
+        ordering = ['product', 'min_quantity']
+        unique_together = [('price_list', 'product', 'min_quantity')]
+        indexes = [
+            models.Index(fields=['price_list', 'is_active']),
+            models.Index(fields=['product', 'is_active']),
+        ]
+
+    def __str__(self):
+        return f"{self.price_list.name} - {self.product.name} @ {self.unit_price}"

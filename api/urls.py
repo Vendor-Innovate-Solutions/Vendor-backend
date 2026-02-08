@@ -45,4 +45,7 @@ urlpatterns = [
     
     # Reporting APIs (Aging Reports)
     path('reports/', include('apps.reporting.api.urls')),
+    
+    # System APIs (Tally Import, etc.)
+    path('system/', include('apps.system.tally_import.urls')),
 ]
