@@ -11,11 +11,21 @@ from django.utils import timezone
 from decimal import Decimal
 
 from apps.portal.models import RetailerCompanyAccess
-from apps.party.models import RetailerUser
+from apps.party.models import Party
 from apps.products.models import Product, Category
 from apps.inventory.models import StockItem, StockBalance
 from apps.orders.models import SalesOrder, OrderItem
 from apps.orders.services.sales_order_service import SalesOrderService
+
+
+def _approved_connections_for_user(user):
+    """Return approved retailer-company links for a user across all companies."""
+    return RetailerCompanyAccess.objects.select_related(
+        'company', 'retailer', 'retailer__party'
+    ).filter(
+        retailer__user=user,
+        status='APPROVED'
+    )
 
 
 class RetailerProductListView(APIView):
@@ -54,23 +64,13 @@ class RetailerProductListView(APIView):
     def get(self, request):
         """List products from connected companies."""
         user = request.user
-        
-        # Get retailer profile
-        try:
-            retailer = RetailerUser.objects.get(user=user)
-        except RetailerUser.DoesNotExist:
-            return Response(
-                {"error": "Retailer profile not found. Please complete your profile first."},
-                status=status.HTTP_404_NOT_FOUND
-            )
-        
-        # Get approved company connections
-        connections = RetailerCompanyAccess.objects.filter(
-            retailer=retailer,
-            status='APPROVED'
-        ).select_related('company').values_list('company_id', flat=True)
-        
-        if not connections:
+
+        # Get approved company connections across all retailer mappings for this user
+        connected_company_ids = list(
+            _approved_connections_for_user(user).values_list('company_id', flat=True).distinct()
+        )
+
+        if not connected_company_ids:
             return Response(
                 {"message": "No company connections found. Please connect to a company first."},
                 status=status.HTTP_200_OK,
@@ -80,14 +80,14 @@ class RetailerProductListView(APIView):
         # Filter by company if specified
         company_id = request.query_params.get('company_id')
         if company_id:
-            if company_id not in [str(c) for c in connections]:
+            if company_id not in [str(c) for c in connected_company_ids]:
                 return Response(
                     {"error": "You are not connected to this company"},
                     status=status.HTTP_403_FORBIDDEN
                 )
             company_ids = [company_id]
         else:
-            company_ids = connections
+            company_ids = connected_company_ids
         
         # Get products from connected companies
         products = Product.objects.filter(
@@ -177,20 +177,13 @@ class RetailerCategoryListView(APIView):
     def get(self, request):
         """List categories from connected companies."""
         user = request.user
-        
-        # Get retailer profile
-        try:
-            retailer = RetailerUser.objects.get(user=user)
-        except RetailerUser.DoesNotExist:
-            return Response([], status=status.HTTP_200_OK)
-        
-        # Get approved connections
-        connections = RetailerCompanyAccess.objects.filter(
-            retailer=retailer,
-            status='APPROVED'
-        ).values_list('company_id', flat=True)
-        
-        if not connections:
+
+        # Get approved company connections across all retailer mappings for this user
+        connected_company_ids = list(
+            _approved_connections_for_user(user).values_list('company_id', flat=True).distinct()
+        )
+
+        if not connected_company_ids:
             return Response([], status=status.HTTP_200_OK)
         
         # Filter by company if specified
@@ -198,7 +191,7 @@ class RetailerCategoryListView(APIView):
         if company_id:
             company_ids = [company_id]
         else:
-            company_ids = connections
+            company_ids = connected_company_ids
         
         # Get categories
         categories = Category.objects.filter(
@@ -265,16 +258,7 @@ class RetailerPlaceOrderView(APIView):
     def post(self, request):
         """Place order with company."""
         user = request.user
-        
-        # Get retailer profile
-        try:
-            retailer = RetailerUser.objects.get(user=user)
-        except RetailerUser.DoesNotExist:
-            return Response(
-                {"error": "Retailer profile not found"},
-                status=status.HTTP_404_NOT_FOUND
-            )
-        
+
         # Validate request data
         company_id = request.data.get('company_id')
         items = request.data.get('items', [])
@@ -291,27 +275,33 @@ class RetailerPlaceOrderView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Verify connection exists and is approved
-        try:
-            connection = RetailerCompanyAccess.objects.select_related('company').get(
-                retailer=retailer,
-                company_id=company_id,
-                status='APPROVED'
-            )
-            company = connection.company
-        except RetailerCompanyAccess.DoesNotExist:
+        # Verify approved connection for this user + company
+        connection = _approved_connections_for_user(user).filter(
+            company_id=company_id
+        ).first()
+
+        if not connection:
             return Response(
                 {"error": "You are not connected to this company or connection is not approved"},
                 status=status.HTTP_403_FORBIDDEN
             )
-        
-        # Get retailer's party in this company
-        party = retailer.party
+
+        company = connection.company
+        party = connection.retailer.party
         if not party or party.company != company:
-            return Response(
-                {"error": "Retailer party not found in this company"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            # Backfill missing party mapping for legacy/partially migrated retailer records.
+            party = Party.objects.filter(company=company, email=user.email).first()
+            if not party:
+                party = Party.objects.create(
+                    company=company,
+                    name=user.get_full_name() or user.email,
+                    party_type='CUSTOMER',
+                    email=user.email,
+                    phone=user.phone or '',
+                    is_retailer=True
+                )
+            connection.retailer.party = party
+            connection.retailer.save(update_fields=['party'])
         
         # Create sales order
         try:
@@ -460,20 +450,20 @@ class RetailerOrderListView(APIView):
     def get(self, request):
         """List retailer's orders."""
         user = request.user
-        
-        # Get retailer profile
-        try:
-            retailer = RetailerUser.objects.get(user=user)
-            party = retailer.party
-        except RetailerUser.DoesNotExist:
+
+        # Collect all approved retailer parties for this user
+        party_ids = list(
+            _approved_connections_for_user(user).exclude(
+                retailer__party__isnull=True
+            ).values_list('retailer__party_id', flat=True).distinct()
+        )
+
+        if not party_ids:
             return Response([], status=status.HTTP_200_OK)
-        
-        if not party:
-            return Response([], status=status.HTTP_200_OK)
-        
+
         # Get orders
         orders = SalesOrder.objects.filter(
-            customer=party
+            customer_id__in=party_ids
         ).select_related('company', 'currency').prefetch_related(
             'items'
         ).order_by('-order_date', '-created_at')
@@ -544,20 +534,20 @@ class RetailerInvoiceListView(APIView):
         from apps.invoice.models import Invoice
         
         user = request.user
-        
-        # Get retailer profile
-        try:
-            retailer = RetailerUser.objects.get(user=user)
-            party = retailer.party
-        except RetailerUser.DoesNotExist:
+
+        # Collect all approved retailer parties for this user
+        party_ids = list(
+            _approved_connections_for_user(user).exclude(
+                retailer__party__isnull=True
+            ).values_list('retailer__party_id', flat=True).distinct()
+        )
+
+        if not party_ids:
             return Response([], status=status.HTTP_200_OK)
-        
-        if not party:
-            return Response([], status=status.HTTP_200_OK)
-        
+
         # Get invoices for this party
         invoices = Invoice.objects.filter(
-            party=party
+            party_id__in=party_ids
         ).select_related('company', 'currency').order_by('-invoice_date', '-created_at')
         
         # Filter by company
@@ -606,22 +596,22 @@ class RetailerInvoiceDetailView(APIView):
         from apps.invoice.models import Invoice, InvoiceLine
         
         user = request.user
-        
-        # Get retailer profile
-        try:
-            retailer = RetailerUser.objects.get(user=user)
-            party = retailer.party
-        except RetailerUser.DoesNotExist:
+
+        # Collect all approved retailer parties for this user
+        party_ids = list(
+            _approved_connections_for_user(user).exclude(
+                retailer__party__isnull=True
+            ).values_list('retailer__party_id', flat=True).distinct()
+        )
+
+        if not party_ids:
             return Response({"error": "Retailer profile not found"}, status=status.HTTP_404_NOT_FOUND)
-        
-        if not party:
-            return Response({"error": "Party not linked"}, status=status.HTTP_400_BAD_REQUEST)
-        
-        # Get the invoice
+
+        # Get the invoice only if it belongs to one of the user's approved retailer parties
         try:
             invoice = Invoice.objects.select_related(
                 'company', 'party', 'currency', 'sales_order'
-            ).get(id=invoice_id, party=party)
+            ).get(id=invoice_id, party_id__in=party_ids)
         except Invoice.DoesNotExist:
             return Response({"error": "Invoice not found"}, status=status.HTTP_404_NOT_FOUND)
         

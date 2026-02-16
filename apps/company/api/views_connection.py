@@ -12,6 +12,7 @@ from django.db import transaction
 from apps.company.models import Company, CompanyUser
 from apps.portal.models import RetailerCompanyAccess
 from apps.party.models import Party, RetailerUser
+from core.permissions.base import RolePermission
 
 
 class GenerateCompanyCodeView(APIView):
@@ -123,58 +124,64 @@ class JoinByCompanyCodeView(APIView):
             )
         
         # Get or create retailer user for this specific company
-        try:
-            retailer = RetailerUser.objects.get(user=user, company=company)
-        except RetailerUser.DoesNotExist:
-            # Create retailer profile if doesn't exist
-            # First, check if user has a party
+        retailer = RetailerUser.objects.filter(user=user, company=company).first()
+        party = retailer.party if retailer else None
+
+        if not party:
+            # First, try to reuse an existing party in this company by email
             party = Party.objects.filter(
                 company=company,
                 email=user.email
             ).first()
-            
-            if not party:
-                # Create a new party for the retailer
-                from apps.accounting.models import Ledger, AccountGroup
-                
-                ledger = None
-                
-                # Try to create a ledger if AccountGroup exists
+
+        if not party:
+            # Create a new party for the retailer
+            from apps.accounting.models import Ledger, AccountGroup
+
+            ledger = None
+
+            # Try to create a ledger if AccountGroup exists
+            debtors_group = AccountGroup.objects.filter(
+                company=company,
+                name__icontains='sundry debtor'
+            ).first()
+
+            if not debtors_group:
                 debtors_group = AccountGroup.objects.filter(
                     company=company,
-                    name__icontains='sundry debtor'
+                    nature='ASSET'
                 ).first()
-                
-                if not debtors_group:
-                    debtors_group = AccountGroup.objects.filter(
-                        company=company,
-                        nature='ASSET'
-                    ).first()
-                
-                # Only create ledger if we have a valid group
-                if debtors_group:
-                    ledger = Ledger.objects.create(
-                        company=company,
-                        name=f"{user.get_full_name() or user.email} (Retailer)",
-                        code=f"RET-{user.id}",
-                        group=debtors_group
-                    )
-                
-                # Create party (ledger can be null)
-                party = Party.objects.create(
+
+            # Only create ledger if we have a valid group
+            if debtors_group:
+                ledger = Ledger.objects.create(
                     company=company,
-                    name=user.get_full_name() or user.email,
-                    party_type='CUSTOMER',
-                    ledger=ledger,
-                    email=user.email,
-                    phone=user.phone or '',
-                    is_retailer=True
+                    name=f"{user.get_full_name() or user.email} (Retailer)",
+                    code=f"RET-{user.id}",
+                    group=debtors_group
                 )
-            
+
+            # Create party (ledger can be null)
+            party = Party.objects.create(
+                company=company,
+                name=user.get_full_name() or user.email,
+                party_type='CUSTOMER',
+                ledger=ledger,
+                email=user.email,
+                phone=user.phone or '',
+                is_retailer=True
+            )
+
+        if retailer:
+            if retailer.party_id != party.id:
+                retailer.party = party
+                retailer.save(update_fields=['party'])
+        else:
             retailer = RetailerUser.objects.create(
                 user=user,
                 company=company,
-                party=party
+                party=party,
+                status='PENDING'
             )
         
         # Check if connection already exists
@@ -184,22 +191,67 @@ class JoinByCompanyCodeView(APIView):
         ).first()
         
         if existing_access:
+            if existing_access.status == 'APPROVED':
+                return Response(
+                    {
+                        "error": "You are already connected to this company",
+                        "status": existing_access.status,
+                        "connection_id": str(existing_access.id)
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Reconnect suspended/rejected/pending access via valid company code.
+            now = timezone.now()
+            existing_access.status = 'APPROVED'
+            existing_access.approved_by = None
+            existing_access.approved_at = now
+            existing_access.notes = f"Reconnected via company code: {company_code}"
+            existing_access.save(update_fields=['status', 'approved_by', 'approved_at', 'notes'])
+
+            retailer_updates = []
+            if retailer.status != 'APPROVED':
+                retailer.status = 'APPROVED'
+                retailer_updates.append('status')
+            if retailer.approved_at is None:
+                retailer.approved_at = now
+                retailer_updates.append('approved_at')
+            if retailer_updates:
+                retailer.save(update_fields=retailer_updates)
+
             return Response(
                 {
-                    "error": "You are already connected to this company",
-                    "status": existing_access.status,
-                    "connection_id": str(existing_access.id)
+                    "message": f"Successfully reconnected to {company.name}",
+                    "connection": {
+                        "id": str(existing_access.id),
+                        "company_id": str(company.id),
+                        "company_name": company.name,
+                        "company_code": company.code,
+                        "status": existing_access.status,
+                        "connected_at": existing_access.approved_at.isoformat()
+                    }
                 },
-                status=status.HTTP_400_BAD_REQUEST
+                status=status.HTTP_200_OK
             )
         
         # Create approved connection (auto-approve when joining by company code)
+        now = timezone.now()
+        retailer_updates = []
+        if retailer.status != 'APPROVED':
+            retailer.status = 'APPROVED'
+            retailer_updates.append('status')
+        if retailer.approved_at is None:
+            retailer.approved_at = now
+            retailer_updates.append('approved_at')
+        if retailer_updates:
+            retailer.save(update_fields=retailer_updates)
+
         connection = RetailerCompanyAccess.objects.create(
             retailer=retailer,
             company=company,
             status='APPROVED',
             approved_by=None,  # Auto-approved via company code
-            approved_at=timezone.now(),
+            approved_at=now,
             notes=f"Auto-approved via company code: {company_code}"
         )
         
@@ -267,3 +319,109 @@ class RetailerCompanyListView(APIView):
         } for conn in connections]
         
         return Response(data)
+
+
+class UpdateConnectionStatusView(APIView):
+    """
+    Update retailer connection status for manufacturer dashboard actions.
+
+    POST /company/update-connection/
+
+    Request:
+    {
+        "connection_id": "uuid",  # RetailerUser id from portal/retailers list
+        "status": "approved" | "suspended" | "blocked" | "rejected"
+    }
+    """
+    permission_classes = [IsAuthenticated, RolePermission.require(['ADMIN', 'OWNER'])]
+
+    @transaction.atomic
+    def post(self, request):
+        connection_id = request.data.get('connection_id')
+        target_status = str(request.data.get('status', '')).strip().lower()
+
+        if not connection_id:
+            return Response(
+                {"error": "connection_id is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if target_status not in ('approved', 'suspended', 'blocked', 'rejected'):
+            return Response(
+                {"error": "Invalid status. Use approved, suspended, blocked, or rejected."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        company = getattr(request, 'company', None)
+        if not company:
+            company_user = CompanyUser.objects.select_related('company').filter(
+                user=request.user,
+                is_active=True,
+                is_default=True
+            ).first()
+
+            if not company_user:
+                company_user = CompanyUser.objects.select_related('company').filter(
+                    user=request.user,
+                    is_active=True
+                ).first()
+
+            if not company_user:
+                return Response(
+                    {"error": "No active company found for this user"},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            company = company_user.company
+
+        try:
+            retailer_user = RetailerUser.objects.get(
+                id=connection_id,
+                company=company
+            )
+        except RetailerUser.DoesNotExist:
+            return Response(
+                {"error": "Connection not found for this company"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        access = RetailerCompanyAccess.objects.filter(
+            retailer=retailer_user,
+            company=company
+        ).first()
+
+        if not access:
+            access = RetailerCompanyAccess.objects.create(
+                retailer=retailer_user,
+                company=company,
+                status='PENDING'
+            )
+
+        now = timezone.now()
+
+        if target_status == 'approved':
+            retailer_user.status = 'APPROVED'
+            retailer_user.approved_at = now
+            retailer_user.rejection_reason = ''
+            access.status = 'APPROVED'
+            access.approved_by = request.user
+            access.approved_at = now
+            message = "Connection approved"
+        elif target_status in ('suspended', 'blocked'):
+            retailer_user.status = 'SUSPENDED'
+            access.status = 'BLOCKED'
+            message = "Connection suspended"
+        else:
+            retailer_user.status = 'REJECTED'
+            access.status = 'REJECTED'
+            message = "Connection rejected"
+
+        retailer_user.save(update_fields=['status', 'approved_at', 'rejection_reason'])
+        access.save(update_fields=['status', 'approved_by', 'approved_at'])
+
+        return Response({
+            "message": message,
+            "connection_id": str(retailer_user.id),
+            "retailer_status": retailer_user.status,
+            "access_status": access.status
+        })

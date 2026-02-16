@@ -14,6 +14,7 @@ from django.db.models import Q
 from core.permissions.base import RolePermission
 from apps.party.models import RetailerUser, Party, PartyAddress
 from apps.company.models import Company
+from apps.portal.models import RetailerCompanyAccess
 
 User = get_user_model()
 
@@ -302,6 +303,23 @@ class RetailerApproveView(APIView):
             retailer_user.approved_by = request.user
             retailer_user.approved_at = timezone.now()
             retailer_user.save(update_fields=['status', 'approved_by', 'approved_at', 'party'])
+
+            # Keep RetailerCompanyAccess in sync for portal product/order APIs
+            connection, created = RetailerCompanyAccess.objects.get_or_create(
+                retailer=retailer_user,
+                company=company,
+                defaults={
+                    'status': 'APPROVED',
+                    'approved_by': request.user,
+                    'approved_at': timezone.now(),
+                    'notes': 'Approved by manufacturer admin'
+                }
+            )
+            if not created:
+                connection.status = 'APPROVED'
+                connection.approved_by = request.user
+                connection.approved_at = timezone.now()
+                connection.save(update_fields=['status', 'approved_by', 'approved_at'])
             
             return Response({
                 'detail': 'Retailer approved successfully',
@@ -359,6 +377,19 @@ class RetailerRejectView(APIView):
             retailer_user.status = 'REJECTED'
             retailer_user.rejection_reason = reason
             retailer_user.save(update_fields=['status', 'rejection_reason'])
+
+            # Keep connection status aligned if connection exists
+            connection = RetailerCompanyAccess.objects.filter(
+                retailer=retailer_user,
+                company=company
+            ).first()
+            if connection:
+                connection.status = 'REJECTED'
+                if reason:
+                    connection.notes = reason
+                    connection.save(update_fields=['status', 'notes'])
+                else:
+                    connection.save(update_fields=['status'])
             
             return Response({
                 'detail': 'Retailer access rejected',
@@ -392,7 +423,19 @@ class RetailerListView(APIView):
         ).order_by('-created_at')
         
         if filter_status:
-            qs = qs.filter(status=filter_status)
+            normalized = filter_status.upper()
+            if normalized == 'APPROVED':
+                qs = qs.filter(
+                    Q(status='APPROVED') |
+                    Q(company_accesses__status='APPROVED', company_accesses__company=company)
+                ).distinct()
+            elif normalized in ('SUSPENDED', 'BLOCKED'):
+                qs = qs.filter(
+                    Q(status='SUSPENDED') |
+                    Q(company_accesses__status='BLOCKED', company_accesses__company=company)
+                ).distinct()
+            else:
+                qs = qs.filter(status=normalized)
         
         data = [{
             'id': str(ru.id),

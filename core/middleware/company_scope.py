@@ -147,7 +147,8 @@ class CompanyScopeMiddleware(MiddlewareMixin):
             bool: True if user has access, False otherwise
         """
         from apps.company.models import CompanyUser
-        from apps.portal.models import RetailerUser, RetailerCompanyAccess
+        from apps.party.models import RetailerUser
+        from apps.portal.models import RetailerCompanyAccess
         
         # Check internal user access (ERP staff)
         if CompanyUser.objects.filter(
@@ -158,17 +159,22 @@ class CompanyScopeMiddleware(MiddlewareMixin):
             return True
         
         # Check retailer user access (customer portal)
-        # Use RetailerCompanyAccess to check approved access
-        try:
-            retailer = RetailerUser.objects.get(user=user)
+        retailer = RetailerUser.objects.filter(
+            user=user,
+            company=company
+        ).first()
+        if retailer:
+            # Primary check: approved connection link
             if RetailerCompanyAccess.objects.filter(
                 retailer=retailer,
                 company=company,
                 status='APPROVED'
             ).exists():
                 return True
-        except RetailerUser.DoesNotExist:
-            pass
-        
+
+            # Backward compatibility: allow legacy approved retailer mapping
+            if retailer.status == 'APPROVED':
+                return True
+
         # No matching access record
         return False

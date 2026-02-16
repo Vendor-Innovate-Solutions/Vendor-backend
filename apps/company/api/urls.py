@@ -28,7 +28,8 @@ from apps.company.api.views_onboarding import (
 from apps.company.api.views_connection import (
     GenerateCompanyCodeView,
     JoinByCompanyCodeView,
-    RetailerCompanyListView
+    RetailerCompanyListView,
+    UpdateConnectionStatusView
 )
 from apps.company.api.views_settings import (
     CompanySettingsView,
@@ -43,6 +44,7 @@ urlpatterns = [
     
     # Company Connection APIs
     path('connection/generate-code/', GenerateCompanyCodeView.as_view(), name='generate-company-code'),
+    path('update-connection/', UpdateConnectionStatusView.as_view(), name='update-connection'),
     
     # Company Management - PHASE 1
     path('', CompanyListCreateView.as_view(), name='company-list'),
