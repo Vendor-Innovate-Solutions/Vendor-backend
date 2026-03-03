@@ -48,4 +48,7 @@ urlpatterns = [
     
     # System APIs (Tally Import, etc.)
     path('system/', include('apps.system.tally_import.urls')),
+
+    # Razorpay Payment Integration
+    path('payments/', include('integrations.payments.urls')),
 ]

@@ -7,10 +7,11 @@ from .base import *
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = False
 
-ALLOWED_HOSTS = [
-    'vendor-backend-production-2053.up.railway.app',
-    # Add your production domains here
-]
+# Allow Render hostname and any custom domains
+ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', '').split(',')
+RENDER_EXTERNAL_HOSTNAME = os.environ.get('RENDER_EXTERNAL_HOSTNAME')
+if RENDER_EXTERNAL_HOSTNAME:
+    ALLOWED_HOSTS.append(RENDER_EXTERNAL_HOSTNAME)
 
 # Database - Override with DATABASE_URL from environment
 DATABASES = {
@@ -23,13 +24,19 @@ DATABASES = {
 
 # CORS Configuration for production
 CORS_ALLOWED_ORIGINS = [
-    "https://vendor-frontend-production-be99.up.railway.app",
-    # Add your production frontend URLs here
+    origin.strip()
+    for origin in os.environ.get('CORS_ALLOWED_ORIGINS', '').split(',')
+    if origin.strip()
 ]
 
+# Allow all origins if none specified (for initial testing only)
+if not CORS_ALLOWED_ORIGINS:
+    CORS_ALLOW_ALL_ORIGINS = True
+
 CSRF_TRUSTED_ORIGINS = [
-    "https://vendor-backend-production-2053.up.railway.app",
-    "https://vendor-frontend-production-be99.up.railway.app",
+    origin.strip()
+    for origin in os.environ.get('CSRF_TRUSTED_ORIGINS', '').split(',')
+    if origin.strip()
 ]
 
 # Security Settings
@@ -40,16 +47,14 @@ SECURE_BROWSER_XSS_FILTER = True
 SECURE_CONTENT_TYPE_NOSNIFF = True
 X_FRAME_OPTIONS = 'DENY'
 
+# Static files - WhiteNoise
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
+
 # Logging Configuration
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
     'handlers': {
-        'file': {
-            'level': 'INFO',
-            'class': 'logging.FileHandler',
-            'filename': 'django.log',
-        },
         'console': {
             'level': 'INFO',
             'class': 'logging.StreamHandler',
@@ -57,12 +62,12 @@ LOGGING = {
     },
     'loggers': {
         'django': {
-            'handlers': ['file', 'console'],
+            'handlers': ['console'],
             'level': 'INFO',
             'propagate': True,
         },
         'app': {
-            'handlers': ['file', 'console'],
+            'handlers': ['console'],
             'level': 'INFO',
             'propagate': True,
         },

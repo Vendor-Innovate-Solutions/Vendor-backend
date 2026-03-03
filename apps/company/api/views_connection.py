@@ -137,6 +137,7 @@ class JoinByCompanyCodeView(APIView):
         if not party:
             # Create a new party for the retailer
             from apps.accounting.models import Ledger, AccountGroup
+            from apps.company.models import FinancialYear
 
             ledger = None
 
@@ -152,14 +153,35 @@ class JoinByCompanyCodeView(APIView):
                     nature='ASSET'
                 ).first()
 
-            # Only create ledger if we have a valid group
-            if debtors_group:
+            # Get the active financial year for the company (required by Ledger model)
+            active_fy = FinancialYear.objects.filter(
+                company=company,
+                is_current=True
+            ).first()
+
+            if not active_fy:
+                # Fallback: get the most recent non-closed FY for this company
+                active_fy = FinancialYear.objects.filter(
+                    company=company,
+                    is_closed=False
+                ).order_by('-start_date').first()
+
+            if not active_fy:
+                # Last resort: any FY for this company
+                active_fy = FinancialYear.objects.filter(
+                    company=company
+                ).order_by('-start_date').first()
+
+            # Only create ledger if we have both a valid group AND a financial year
+            if debtors_group and active_fy:
                 ledger = Ledger.objects.create(
                     company=company,
                     name=f"{user.get_full_name() or user.email} (Retailer)",
                     code=f"RET-{user.id}",
-                    group=debtors_group
+                    group=debtors_group,
+                    opening_balance_fy=active_fy,
                 )
+
 
             # Create party (ledger can be null)
             party = Party.objects.create(

@@ -119,7 +119,7 @@ DATABASES = {
         'USER': 'postgres',
         'PASSWORD': 'venkat*2005',
         'HOST': 'localhost',
-        'PORT': '5432',
+        'PORT': '5433',
     }
 }
 
@@ -242,9 +242,14 @@ EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', 'ywqc fghh kgdv kaqe
 DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
 
 # Twilio Configuration
-TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID', 'AC05269c801ece94e35194821bccf5f230')
-TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN', '9ee48c27cad6c0f26acfd63c7fb93f22')
-TWILIO_PHONE_NUMBER = os.environ.get('TWILIO_PHONE_NUMBER', '+17756408456')
+TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID', '')
+TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN', '')
+TWILIO_PHONE_NUMBER = os.environ.get('TWILIO_PHONE_NUMBER', '')
+
+# Stripe Configuration
+STRIPE_PUBLISHABLE_KEY = os.environ.get('STRIPE_PUBLISHABLE_KEY', '')
+STRIPE_SECRET_KEY = os.environ.get('STRIPE_SECRET_KEY', '')
+
 
 # Logging Configuration
 LOGGING = {
